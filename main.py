@@ -27,7 +27,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .config import Prefs
 from .modules import charts, datasource, genimage, reporting
-from .modules.constants import FUEL_NAMES, FUEL_ORDER
+from .modules.constants import FUEL_NAMES, FUEL_ORDER, PROVINCES
 from .modules.storage import Store
 
 PLUGIN_NAME = "astrbot_plugin_oil_price"
@@ -353,6 +353,22 @@ class OilPricePlugin(Star):
                     eps.append(ep)
         return eps
 
+    def _parse_province_args(self, event: AstrMessageEvent, province: str) -> list:
+        """解析 /今日油价 的省份参数：支持多省空格分隔（如 /今日油价 广东 江苏）。
+
+        从原始消息里取命令字之后的 token 并按合法省份名单校验去重；
+        无有效 token 时回退到单省参数，再回退到已配置省份。
+        """
+        raw = str(getattr(event, "message_str", "") or "")
+        after = raw.split("今日油价", 1)[1] if "今日油价" in raw else ""
+        tokens = [t for t in after.split() if t in PROVINCES]
+        if tokens:
+            return list(dict.fromkeys(tokens))
+        prov_arg = (province or "").strip()
+        if prov_arg in PROVINCES:
+            return [prov_arg]
+        return self.prefs.provinces()
+
     async def _gen_image_from_text(self, text: str, name: str, style: str = "") -> str:
         """把当天文字消息发给 bot 已配置模型平台的生图模型，返回本地 PNG 路径。"""
         if not self.prefs.gen_enable():
@@ -505,7 +521,7 @@ class OilPricePlugin(Star):
 
     @filter.command("今日油价")
     async def today_cmd(self, event: AstrMessageEvent, province: str = ""):
-        """出图版播报。/今日油价 [省份]；不带省份时出多省拼接长图"""
+        """出图版播报。/今日油价 [省份...]；多省空格分隔出合一图，缺省用已配置省份"""
         key_hint = self._key_hint()
         if key_hint:
             yield event.plain_result(key_hint)
@@ -514,8 +530,7 @@ class OilPricePlugin(Star):
         if not ok:
             yield event.plain_result(extra)
             return
-        prov_arg = (province or "").strip()
-        provs = [prov_arg] if prov_arg else self.prefs.provinces()
+        provs = self._parse_province_args(event, province)
         rows = await self._collect_today(provs)
         if not rows:
             yield event.plain_result("油价查询失败喵，请稍后再试")
@@ -526,7 +541,7 @@ class OilPricePlugin(Star):
                 "（图片消息未开启或未配置生图端点，已发文字版。"
                 "请到 WebUI「油价设置」开启图片消息并确认 bot 已配置模型）"
             )
-            if prov_arg or len(rows) == 1:
+            if len(provs) == 1 and rows:
                 prov, data = rows[0]
                 yield event.plain_result(self._report_text(prov, data) + hint)
             else:
@@ -535,7 +550,7 @@ class OilPricePlugin(Star):
                 )
             return
         try:
-            if prov_arg or len(rows) == 1:
+            if len(provs) == 1 and rows:
                 prov, data = rows[0]
                 path = await self._gen_image_from_text(
                     self._report_text(prov, data),

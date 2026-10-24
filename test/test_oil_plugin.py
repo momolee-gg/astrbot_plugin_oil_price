@@ -64,9 +64,10 @@ class MockContext:
 
 
 class MockEvent:
-    def __init__(self, sender="tester", umo="default:GroupMessage:10001"):
+    def __init__(self, sender="tester", umo="default:GroupMessage:10001", message_str=""):
         self.sender = sender
         self.unified_msg_origin = umo
+        self.message_str = message_str
         self.sent = []
 
     def get_sender_id(self):
@@ -825,6 +826,32 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         ev = MockEvent()
         out = await run_cmd(self.plugin.today_cmd(ev, ""))
         self.assertEqual(out[0]["type"], "chain")
+
+    async def test_a05b_today_multi_province_args(self):
+        seen = []
+        with mock.patch.object(
+            plugin_main.datasource,
+            "fetch_province",
+            side_effect=lambda prov, key: (seen.append(prov), fake_price_data(8.09))[1],
+        ):
+            ev = MockEvent(message_str="今日油价 广东 上海")
+            out = await run_cmd(self.plugin.today_cmd(ev, ""))
+        self.assertEqual(out[0]["type"], "chain")
+        self.assertIn("广东", seen)
+        self.assertIn("上海", seen)
+        self.assertNotIn("江苏", seen)
+
+    async def test_a05c_today_single_arg_still_works(self):
+        seen = []
+        with mock.patch.object(
+            plugin_main.datasource,
+            "fetch_province",
+            side_effect=lambda prov, key: (seen.append(prov), fake_price_data(8.09))[1],
+        ):
+            ev = MockEvent(message_str="今日油价 广东")
+            out = await run_cmd(self.plugin.today_cmd(ev, ""))
+        self.assertEqual(out[0]["type"], "chain")
+        self.assertEqual(seen, ["广东"])
 
     async def test_a06_today_render_fail_text_fallback(self):
         ev = MockEvent()
