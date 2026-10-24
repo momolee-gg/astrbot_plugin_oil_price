@@ -1,0 +1,10 @@
+{
+  "metadata": {
+    "display_name": "油价播报"
+  },
+  "views": {
+    "config": {
+      "title": "今日油价"
+    }
+  }
+}

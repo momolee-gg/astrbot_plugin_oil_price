@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# 运行数据 / 本地配置（绝不入库）
+plugin_data/
+data/
+runtime/
+tmp/
+*.log
+astrbot_plugin_oil_price_config.json
+config.json
+config.local.json
+history.json
+user_quota.json
+last_price.json
+
+# 备份与部署残留
+*.bak
+*.bak-*
+*.bak2-*
+*.bak.*
+.bak/
+oil_backup*/
+oil_backup*/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 凭据（双保险）
+.env
+.env.*
+*_token.txt
+*pat*.txt
+askpass*.sh

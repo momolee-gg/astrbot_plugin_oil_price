@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>今日油价</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --line: #e3e6eb; --line-strong: #cfd4dc;
+    --text: #24292f; --sub: #8b929c; --input-bg: #ffffff;
+    --btn: #1f6feb; --btn-hover: #1a5cd4; --ok: #1a7f37; --err: #cf222e;
+    --chip: #e7f0fe; --chip-text: #1f6feb; --panel: #ffffff;
+    --tab-bg: transparent; --tab-active-bg: var(--chip); --tab-active-text: var(--chip-text);
+  }
+  html.dark {
+    --bg: #181a26; --card: #212536; --line: #30344a; --line-strong: #3c415c;
+    --text: #e9ecf4; --sub: #9298b0; --input-bg: #181a26;
+    --btn: #4078e0; --btn-hover: #5589ea; --ok: #51cf66; --err: #ff6b6b;
+    --chip: #2c3350; --chip-text: #9db8f0; --panel: #1c2030;
+    --tab-active-bg: #2c3350; --tab-active-text: #9db8f0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  }
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; gap: 18px;
+    background: var(--card); border-bottom: 1px solid var(--line);
+    padding: 12px 22px;
+  }
+  .topbar .logo { font-size: 17px; font-weight: 800; white-space: nowrap; }
+  .tabs { display: flex; gap: 8px; }
+  .tab {
+    background: var(--tab-bg); color: var(--text); border: none; border-radius: 8px;
+    padding: 7px 16px; font-size: 14px; cursor: pointer; font-weight: 600;
+  }
+  .tab:hover { background: var(--chip); }
+  .tab.active { background: var(--tab-active-bg); color: var(--tab-active-text); }
+  .page { max-width: 980px; margin: 0 auto; padding: 18px 22px; }
+  .page.hidden { display: none; }
+
+  .subbar {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  }
+  .seg { display: flex; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px; gap: 4px; }
+  .seg-btn {
+    background: transparent; color: var(--text); border: none; border-radius: 7px;
+    padding: 7px 16px; font-size: 13.5px; cursor: pointer; font-weight: 600;
+  }
+  .seg-btn:hover { background: var(--chip); }
+  .seg-btn.active { background: var(--chip); color: var(--chip-text); }
+  .spacer { flex: 1; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px 26px; margin-bottom: 18px;
+  }
+  .card.hidden { display: none; }
+  .section-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  .section-desc { color: var(--sub); font-size: 12.5px; margin-bottom: 18px; }
+  .field { margin-bottom: 18px; }
+  .field > .label { font-weight: 600; margin-bottom: 4px; }
+  .hint { color: var(--sub); font-size: 12.5px; margin-bottom: 8px; }
+  input[type="text"], input[type="number"], textarea, select {
+    width: 100%; background: var(--input-bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
+    font-size: 14px; outline: none; font-family: inherit;
+  }
+  input:focus, textarea:focus, select:focus { border-color: var(--btn); }
+  textarea { resize: vertical; min-height: 64px; }
+  .inline { display: flex; gap: 12px; }
+  .inline > div { flex: 1; }
+  .value-text { padding: 8px 0; word-break: break-all; }
+  a.link { color: var(--btn); text-decoration: none; cursor: pointer; }
+  a.link:hover { text-decoration: underline; }
+  .badge {
+    display: inline-block; font-size: 12px; border-radius: 10px;
+    padding: 1px 10px; vertical-align: middle;
+  }
+  .badge.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .badge.err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+  .switch { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
+  .switch .track {
+    width: 40px; height: 22px; border-radius: 11px; background: var(--line-strong);
+    position: relative; transition: background .15s;
+  }
+  .switch .track::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+    border-radius: 50%; background: #fff; transition: left .15s;
+  }
+  .switch input { display: none; }
+  .switch input:checked + .track { background: var(--btn); }
+  .switch input:checked + .track::after { left: 20px; }
+
+  button.primary {
+    background: var(--btn); color: #fff; border: none; border-radius: 8px;
+    padding: 8px 22px; font-size: 14px; cursor: pointer; font-weight: 600;
+  }
+  button.primary:hover { background: var(--btn-hover); }
+  button.primary:disabled { opacity: .55; cursor: default; }
+  button.ghost {
+    background: transparent; color: var(--text); border: 1px solid var(--line);
+    padding: 4px 12px; font-size: 12.5px; font-weight: 400; border-radius: 8px; cursor: pointer;
+  }
+  .status { font-size: 13px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .summary { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
+  .summary th, .summary td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; }
+  .summary th:first-child, .summary td:first-child { text-align: left; }
+  .summary th { color: var(--sub); font-weight: 600; }
+  .up { color: var(--err); }
+  .down { color: var(--ok); }
+  .chart-img { width: 100%; border-radius: 10px; border: 1px solid var(--line); }
+
+  /* 目标行编辑器 */
+  .trow { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .trow .t-id { flex: 1; min-width: 0; }
+  .trow .t-limit { flex: 0 0 150px; }
+  .trow .t-del {
+    flex: 0 0 30px; background: transparent; color: var(--err);
+    border: 1px solid var(--line); border-radius: 7px; padding: 6px 0;
+    font-size: 14px; cursor: pointer; font-weight: 400;
+  }
+  .trow .t-del:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
+  .tadd { background: transparent; color: var(--chip-text); border: 1px dashed var(--line-strong); }
+
+  /* 多选下拉 */
+  .ms { position: relative; }
+  .ms-box {
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    min-height: 40px; background: var(--input-bg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 5px 32px 5px 10px; cursor: pointer; position: relative;
+  }
+  .ms-box::after { content: "▾"; position: absolute; right: 12px; color: var(--sub); }
+  .ms-box .placeholder { color: var(--sub); }
+  .chip {
+    background: var(--chip); color: var(--chip-text); border-radius: 6px;
+    padding: 1px 8px; font-size: 12.5px; white-space: nowrap;
+  }
+  .ms-panel {
+    position: absolute; z-index: 30; top: calc(100% + 6px); left: 0;
+    width: 100%; max-height: 320px; overflow: auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.18);
+  }
+  .ms-panel.hidden { display: none; }
+  .ms-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+  .ms-list { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px 8px; }
+  .ms-list label {
+    display: flex; align-items: center; gap: 6px; padding: 3px 4px;
+    border-radius: 6px; cursor: pointer; font-size: 13.5px; white-space: nowrap;
+  }
+  .ms-list label:hover { background: var(--chip); }
+  .ms-list input { width: auto; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo">⛽ 今日油价</div>
+  <nav class="tabs">
+    <button class="tab" data-tab="stats">📈 油价统计</button>
+    <button class="tab active" data-tab="cfg">⚙️ 系统配置</button>
+  </nav>
+</div>
+
+<!-- ================= 系统配置 ================= -->
+<div class="page" id="tab-cfg">
+  <div class="subbar">
+    <div class="seg">
+      <button class="seg-btn active" data-sec="push">推送设置</button>
+      <button class="seg-btn" data-sec="api">接口配置</button>
+    </div>
+    <div class="spacer"></div>
+    <span id="status" class="status"></span>
+    <button class="primary" id="save">保存</button>
+  </div>
+
+  <div class="card" id="sec-push">
+    <div class="section-title">⚙️ 推送设置</div>
+    <div class="section-desc">每日定时推送与月度走势图的省份、时间与目标</div>
+
+    <div class="field">
+      <div class="label">🏭 推送省份（可多选）</div>
+      <div class="hint">每日推送与 /今日油价 缺省时使用的省份；多省推送合成为一张长图，每省一个独立板块</div>
+      <div class="ms" id="provMs">
+        <div class="ms-box" id="provBox"></div>
+        <div class="ms-panel hidden" id="provPanel">
+          <div class="ms-actions">
+            <button type="button" class="ghost" id="provAll">全选</button>
+            <button type="button" class="ghost" id="provNone">清空</button>
+          </div>
+          <div class="ms-list" id="provList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="label">⏰ 推送时间</div>
+      <div class="hint">单省推送为「文字版 + 图片版」两条消息；多省仅推送图片版</div>
+      <div class="inline">
+        <div><select id="push_hour"></select></div>
+        <div><select id="push_minute"></select></div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="label">🔁 推送频率</div>
+      <div class="hint">每日 = 每天到点推送；每周 = 仅在每周推送日推送；有变动时 = 每天到点对比油价，有变动才推送（首次运行仅记录基线）</div>
+      <div class="inline">
+        <div>
+          <select id="push_frequency">
+            <option value="daily">每日推送</option>
+            <option value="weekly">每周推送</option>
+            <option value="on_change">有变动时推送</option>
+          </select>
+        </div>
+        <div id="push_weekday_wrap">
+          <select id="push_weekday"></select>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="label">🔔 调价提前提醒</div>
+      <div class="hint">「每周 / 有变动时」模式下，距下次调价窗口还剩 N 天时到点额外发一条文字提醒；0 = 不提醒</div>
+      <select id="change_remind_days">
+        <option value="0">不提醒</option>
+        <option value="1">提前 1 天</option>
+        <option value="2">提前 2 天</option>
+        <option value="3">提前 3 天</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <div class="label">🖼️ 图片消息开关</div>
+      <div class="hint">开启后推送与 /今日油价 发送 AI 生成的图片（每天随机换一种风格，不连续重复）；关闭后只发文字。生图失败自动回退文字</div>
+      <label class="switch">
+        <input type="checkbox" id="gen_enable">
+        <span class="track"></span>
+        <span>发送图片消息</span>
+      </label>
+    </div>
+
+    <div class="field">
+      <div class="label">📅 每月推送油价走势图</div>
+      <div class="hint">每月 1 日按推送时间向推送目标发送上一月的每日油价折线图</div>
+      <label class="switch">
+        <input type="checkbox" id="monthly_push">
+        <span class="track"></span>
+        <span>开启月度走势推送</span>
+      </label>
+    </div>
+
+    <div class="field">
+      <div class="label">👤 私聊推送目标（绑定每日查询上限）</div>
+      <div class="hint">每行一个 QQ 号；限额留空 = 使用全局默认。该目标内用户的每日查询次数按此限额计量</div>
+      <div id="privRows"></div>
+      <button type="button" class="ghost tadd" id="privAdd">＋ 添加私聊目标</button>
+    </div>
+
+    <div class="field">
+      <div class="label">👥 群聊推送目标（绑定每日查询上限）</div>
+      <div class="hint">每行一个群号；限额留空 = 使用全局默认。该群内用户的每日查询次数按此限额计量</div>
+      <div id="groupRows"></div>
+      <button type="button" class="ghost tadd" id="groupAdd">＋ 添加群聊目标</button>
+    </div>
+
+    <div class="field">
+      <div class="label">🔢 每人每日查询上限</div>
+      <div class="hint">/油价 等指令的每人每日次数上限，设为 0 表示不限制</div>
+      <input type="number" id="user_daily_limit" min="0" step="1">
+    </div>
+
+    <div class="field">
+      <div class="label">⛽ 默认油号（可多选）</div>
+      <div class="hint">卡片展示与 看看油价 / 我要加油 缺省的油号，可多选；指令未指定时使用第一个</div>
+      <div class="ms" id="cfgFuelMs">
+        <div class="ms-box" id="cfgFuelBox"></div>
+        <div class="ms-panel hidden" id="cfgFuelPanel">
+          <div class="ms-list" id="cfgFuelList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card hidden" id="sec-api">
+    <div class="field">
+      <div class="label">🗝️ 数据源</div>
+      <div class="value-text" id="datasource">万维ShowAPI</div>
+    </div>
+
+    <div class="field">
+      <div class="label">🌐 官方地址</div>
+      <div class="value-text">
+        <a class="link" id="regLink" href="https://www.showapi.com/" target="_blank" rel="noopener">https://www.showapi.com/</a>
+        <span class="status" id="regTip"></span>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="label">🗝️ ShowAPI appKey
+        <span class="badge err" id="keyBadge" style="display:none">未配置</span>
+        <span class="badge ok" id="keyBadgeOk" style="display:none">已配置</span>
+      </div>
+      <div class="hint">万维 ShowAPI 的 appKey，在官方控制台获取后填入。未填写时插件功能不启用</div>
+      <input type="text" id="appkey" autocomplete="off" spellcheck="false" placeholder="请输入 appKey">
+    </div>
+
+    <div class="field">
+      <div class="label">🎨 生图模型</div>
+      <div class="hint">生图使用的模型名；端点自动匹配 bot 已配置的模型平台（如百炼 qwen-image-3.0、中转 gpt-image-2.5、智谱 glm-image）。未配置或不可用时不发图片，只发文字</div>
+      <input type="text" id="gen_model" autocomplete="off" spellcheck="false" placeholder="qwen-image-3.0">
+    </div>
+  </div>
+</div>
+
+<!-- ================= 油价统计 ================= -->
+<div class="page hidden" id="tab-stats">
+  <div class="card">
+    <div class="section-title">📈 油价统计</div>
+    <div class="section-desc">每日油价走势折线图，按省份与油号生成（数据自插件启用后逐日积累）</div>
+
+    <div class="field">
+      <div class="label">省份（可多选）</div>
+      <div class="ms" id="statProvMs">
+        <div class="ms-box" id="statProvBox"></div>
+        <div class="ms-panel hidden" id="statProvPanel">
+          <div class="ms-actions">
+            <button type="button" class="ghost" id="statProvAll">全选</button>
+            <button type="button" class="ghost" id="statProvNone">清空</button>
+          </div>
+          <div class="ms-list" id="statProvList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="label">油号（可多选）</div>
+      <div class="ms" id="statFuelMs">
+        <div class="ms-box" id="statFuelBox"></div>
+        <div class="ms-panel hidden" id="statFuelPanel">
+          <div class="ms-list" id="statFuelList"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="label">统计范围</div>
+      <div class="inline" style="align-items:center">
+        <div style="flex:0 0 200px">
+          <select id="statDays">
+            <option value="7">近 7 天</option>
+            <option value="30" selected>近 30 天</option>
+            <option value="90">近 90 天</option>
+            <option value="180">近 180 天</option>
+          </select>
+        </div>
+        <div style="flex:0 0 auto">
+          <button class="primary" id="statRender">生成图表</button>
+        </div>
+        <div style="flex:1"><span id="statStatus" class="status"></span></div>
+      </div>
+    </div>
+
+    <div class="field hidden" id="statResult">
+      <table class="summary" id="statSummary"></table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const state = { options: [] };
+  const provSel = { selected: [] };
+  const cfgFuel = { selected: [], options: [] };
+  const statProv = { selected: [], options: [] };
+  const statFuel = { selected: [], options: [] };
+  let bridge = null;
+
+  function addTargetRow(containerId, t) {
+    const row = document.createElement("div");
+    row.className = "trow";
+    row.innerHTML =
+      '<input class="t-id" type="text" autocomplete="off" spellcheck="false" placeholder="QQ号/群号">' +
+      '<input class="t-limit" type="number" min="0" step="1" placeholder="限额(留空=默认)">' +
+      '<button type="button" class="t-del" title="删除">×</button>';
+    row.querySelector(".t-id").value = t.id || "";
+    if (t.limit !== null && t.limit !== undefined) row.querySelector(".t-limit").value = t.limit;
+    row.querySelector(".t-del").addEventListener("click", () => row.remove());
+    $(containerId).appendChild(row);
+  }
+
+  function collectTargets(containerId) {
+    return Array.from($(containerId).querySelectorAll(".trow")).map((r) => ({
+      id: r.querySelector(".t-id").value.trim(),
+      limit: r.querySelector(".t-limit").value === "" ? null
+           : parseInt(r.querySelector(".t-limit").value, 10)
+    })).filter((t) => t.id);
+  }
+
+  function initTargetEditors() {
+    $("privAdd").addEventListener("click", () => addTargetRow("privRows", {}));
+    $("groupAdd").addEventListener("click", () => addTargetRow("groupRows", {}));
+  }
+
+  const waitForBridge = async () => {
+    for (let i = 0; i < 50; i++) {
+      if (window.AstrBotPluginView) return window.AstrBotPluginView;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    throw new Error("面板桥接未就绪");
+  };
+
+  function setStatus(text, cls) {
+    const el = $("status");
+    el.textContent = text || "";
+    el.className = "status" + (cls ? " " + cls : "");
+  }
+
+  function setStatStatus(text, cls) {
+    const el = $("statStatus");
+    el.textContent = text || "";
+    el.className = "status" + (cls ? " " + cls : "");
+  }
+
+  // 重载/bfcache 恢复时重置统计结果区（浏览器会还原上次的 DOM 状态）
+  function resetStatResult() {
+    $("statResult").classList.add("hidden");
+    const img = $("statChart");
+    if (img) img.remove();
+  }
+  window.addEventListener("pageshow", (e) => { if (e.persisted) resetStatResult(); });
+  resetStatResult();
+
+  // ---------- 顶部 tab 切换 ----------
+  document.querySelectorAll(".tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      $("tab-stats").classList.toggle("hidden", btn.dataset.tab !== "stats");
+      $("tab-cfg").classList.toggle("hidden", btn.dataset.tab !== "cfg");
+    });
+  });
+
+  // ---------- 系统配置内二级切换 ----------
+  document.querySelectorAll(".seg-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".seg-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      ["push", "api"].forEach((k) => $("sec-" + k).classList.toggle("hidden", k !== btn.dataset.sec));
+    });
+  });
+
+  // ---------- 通用多选 ----------
+  function renderMsChips(boxId, selected) {
+    const box = $(boxId);
+    box.innerHTML = "";
+    if (!selected.length) {
+      const s = document.createElement("span");
+      s.className = "placeholder";
+      s.textContent = "请选择";
+      box.appendChild(s);
+      return;
+    }
+    selected.forEach((v) => {
+      const c = document.createElement("span");
+      c.className = "chip";
+      c.textContent = v;
+      box.appendChild(c);
+    });
+  }
+
+  function buildMs(listId, options, st, boxId) {
+    const list = $(listId);
+    list.innerHTML = "";
+    options.forEach((p) => {
+      const label = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.dataset.p = p;
+      cb.checked = st.selected.includes(p);
+      cb.addEventListener("change", () => {
+        const i = st.selected.indexOf(p);
+        if (cb.checked && i < 0) st.selected.push(p);
+        if (!cb.checked && i >= 0) st.selected.splice(i, 1);
+        renderMsChips(boxId, st.selected);
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(p));
+      list.appendChild(label);
+    });
+    renderMsChips(boxId, st.selected);
+  }
+
+  function initMs(rootId, boxId, panelId, listId, options, st, withAll, allId, noneId) {
+    buildMs(listId, options, st, boxId);
+    $(boxId).addEventListener("click", (e) => {
+      if (e.target.closest(".ms-panel")) return;
+      $(panelId).classList.toggle("hidden");
+    });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest("#" + rootId)) $(panelId).classList.add("hidden");
+    });
+    if (withAll) {
+      $(allId).addEventListener("click", () => {
+        st.selected = options.slice();
+        buildMs(listId, options, st, boxId);
+      });
+      $(noneId).addEventListener("click", () => {
+        st.selected = [];
+        buildMs(listId, options, st, boxId);
+      });
+    }
+  }
+
+  // ---------- 系统配置：加载 / 保存 ----------
+  function fillSelect(el, values, selected) {
+    el.innerHTML = "";
+    values.forEach((v) => {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = v;
+      if (String(selected) === String(v)) o.selected = true;
+      el.appendChild(o);
+    });
+  }
+
+  function fillTimeSelects(hour, minute) {
+    const h = $("push_hour"), m = $("push_minute");
+    h.innerHTML = ""; m.innerHTML = "";
+    for (let i = 0; i < 24; i++) {
+      const o = document.createElement("option");
+      o.value = i; o.textContent = String(i).padStart(2, "0") + " 时";
+      if (i === hour) o.selected = true;
+      h.appendChild(o);
+    }
+    for (let i = 0; i < 60; i++) {
+      const o = document.createElement("option");
+      o.value = i; o.textContent = String(i).padStart(2, "0") + " 分";
+      if (i === minute) o.selected = true;
+      m.appendChild(o);
+    }
+  }
+
+  function fillWeekdaySelect(selected) {
+    const w = $("push_weekday");
+    w.innerHTML = "";
+    const names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+    names.forEach((n, i) => {
+      const o = document.createElement("option");
+      o.value = i; o.textContent = "每" + n;
+      if (i === selected) o.selected = true;
+      w.appendChild(o);
+    });
+  }
+
+  function syncFrequencyUI() {
+    const freq = $("push_frequency").value;
+    $("push_weekday_wrap").style.visibility = freq === "weekly" ? "visible" : "hidden";
+  }
+
+  function applyConfig(cfg) {
+    provSel.selected = (cfg.provinces || []).slice();
+    if (!state.options.length) initMs("provMs", "provBox", "provPanel", "provList",
+                                      cfg.province_options || [], provSel, true, "provAll", "provNone");
+    else buildMs("provList", state.options, provSel, "provBox");
+    fillTimeSelects(cfg.push_hour, cfg.push_minute);
+    $("push_frequency").value = cfg.push_frequency || "daily";
+    fillWeekdaySelect(cfg.push_weekday || 0);
+    $("change_remind_days").value = String(cfg.change_remind_days == null
+      ? 1 : cfg.change_remind_days);
+    $("gen_enable").checked = cfg.gen_enable !== false;
+    $("gen_model").value = cfg.gen_model || "";
+    syncFrequencyUI();
+    $("monthly_push").checked = cfg.monthly_push !== false;
+    $("privRows").innerHTML = "";
+    (cfg.private_targets || []).forEach((t) => addTargetRow("privRows", t));
+    if (!(cfg.private_targets || []).length) addTargetRow("privRows", { id: "", limit: null });
+    $("groupRows").innerHTML = "";
+    (cfg.group_targets || []).forEach((t) => addTargetRow("groupRows", t));
+    if (!(cfg.group_targets || []).length) addTargetRow("groupRows", { id: "", limit: null });
+    $("user_daily_limit").value = cfg.user_daily_limit;
+    cfgFuel.options = cfg.fuel_options || ["92", "95", "98", "0", "89"];
+    cfgFuel.selected = (cfg.default_fuels || []).slice();
+    buildMs("cfgFuelList", cfgFuel.options, cfgFuel, "cfgFuelBox");
+    $("datasource").textContent = cfg.datasource || "万维ShowAPI";
+    $("regLink").href = cfg.register_url || "https://www.showapi.com/";
+    $("regLink").textContent = cfg.register_url || "https://www.showapi.com/";
+    $("appkey").value = cfg.app_key || "";
+    $("keyBadge").style.display = cfg.app_key_ready ? "none" : "";
+    $("keyBadgeOk").style.display = cfg.app_key_ready ? "" : "none";
+  }
+
+  function collectPayload() {
+    return {
+      provinces: provSel.selected,
+      push_hour: parseInt($("push_hour").value, 10),
+      push_minute: parseInt($("push_minute").value, 10),
+      push_frequency: $("push_frequency").value,
+      push_weekday: parseInt($("push_weekday").value, 10),
+      change_remind_days: parseInt($("change_remind_days").value, 10),
+      monthly_push: $("monthly_push").checked,
+      gen_enable: $("gen_enable").checked,
+      gen_model: $("gen_model").value.trim(),
+      private_targets: collectTargets("privRows"),
+      group_targets: collectTargets("groupRows"),
+      user_daily_limit: parseInt($("user_daily_limit").value || "0", 10),
+      default_fuels: cfgFuel.selected,
+      app_key: $("appkey").value.trim()
+    };
+  }
+
+  // 官方地址：沙箱 iframe 内可能拦截新窗口，被拦截时回退为复制链接
+  function initRegisterLink() {
+    const link = $("regLink");
+    link.addEventListener("click", (e) => {
+      let opened = null;
+      try { opened = window.open(link.href, "_blank", "noopener"); } catch (err) {}
+      if (opened) { e.preventDefault(); return; }
+      e.preventDefault();
+      const t = document.createElement("textarea");
+      t.value = link.href;
+      document.body.appendChild(t);
+      t.select();
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch (err) {}
+      t.remove();
+      const tip = $("regTip");
+      tip.textContent = copied ? "已在面板外打开受限，链接已复制" : "请手动复制：" + link.href;
+      tip.className = "status ok";
+      setTimeout(() => { tip.textContent = ""; }, 4000);
+    });
+  }
+
+  // ---------- 油价统计 ----------
+  function renderStatSummary(rows) {
+    const tb = $("statSummary");
+    if (!rows.length) { tb.innerHTML = ""; return; }
+    const head = "<tr><th>线路</th><th>起始价</th><th>最新价</th><th>涨跌</th><th>涨幅</th>"
+      + "<th>最低</th><th>最高</th><th>均价</th><th>样本天数</th></tr>";
+    const body = rows.map((r) => {
+      const cls = r.diff > 0 ? "up" : (r.diff < 0 ? "down" : "");
+      return "<tr><td>" + r.label + "</td><td>" + r.first.toFixed(2) + "</td><td>"
+        + r.last.toFixed(2) + "</td><td class='" + cls + "'>" + (r.diff > 0 ? "+" : "")
+        + r.diff.toFixed(2) + "</td><td class='" + cls + "'>"
+        + (r.diff_pct == null ? "—" : (r.diff_pct > 0 ? "+" : "") + r.diff_pct.toFixed(2) + "%")
+        + "</td><td>" + r.min.toFixed(2) + "</td><td>" + r.max.toFixed(2)
+        + "</td><td>" + r.avg.toFixed(2) + "</td><td>" + r.days + "</td></tr>";
+    }).join("");
+    tb.innerHTML = head + body;
+  }
+
+  function initStats(cfg) {
+    statProv.options = cfg.province_options || [];
+    statProv.selected = (cfg.provinces || []).slice(0, 5);
+    statFuel.options = cfg.fuel_options || ["92", "95", "98", "0", "89"];
+    statFuel.selected = statFuel.options.filter((f) => f !== "89").slice(0, 3);
+    initMs("statProvMs", "statProvBox", "statProvPanel", "statProvList",
+           statProv.options, statProv, true, "statProvAll", "statProvNone");
+    initMs("statFuelMs", "statFuelBox", "statFuelPanel", "statFuelList",
+           statFuel.options, statFuel, false, null, null);
+  }
+
+  (async () => {
+    try {
+      bridge = await waitForBridge();
+      const ctx = await bridge.ready();
+      if (ctx && ctx.isDark) document.documentElement.classList.add("dark");
+    } catch (e) {
+      if (matchMedia("(prefers-color-scheme: dark)").matches)
+        document.documentElement.classList.add("dark");
+    }
+
+    initMs("cfgFuelMs", "cfgFuelBox", "cfgFuelPanel", "cfgFuelList",
+           cfgFuel.options, cfgFuel, false, null, null);
+    $("push_frequency").addEventListener("change", syncFrequencyUI);
+    initTargetEditors();
+    initRegisterLink();
+
+    try {
+      const cfg = await bridge.apiGet("config/get");
+      applyConfig(cfg);
+      initStats(cfg);
+    } catch (e) {
+      setStatus("配置读取失败: " + e.message, "err");
+    }
+
+    $("save").addEventListener("click", async () => {
+      if (!provSel.selected.length) {
+        setStatus("请至少选择一个推送省份", "err");
+        return;
+      }
+      if (!cfgFuel.selected.length) {
+        setStatus("请至少选择一个默认油号", "err");
+        return;
+      }
+      const btn = $("save");
+      btn.disabled = true;
+      setStatus("");
+      try {
+        const res = await bridge.apiPost("config/save", collectPayload());
+        $("keyBadge").style.display = res.app_key_ready ? "none" : "";
+        $("keyBadgeOk").style.display = res.app_key_ready ? "" : "none";
+        setStatus("已保存", "ok");
+      } catch (e) {
+        setStatus("保存失败: " + e.message, "err");
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => setStatus(""), 4000);
+      }
+    });
+
+    $("statRender").addEventListener("click", async () => {
+      if (!statProv.selected.length) { setStatStatus("请至少选择一个省份", "err"); return; }
+      if (!statFuel.selected.length) { setStatStatus("请至少选择一个油号", "err"); return; }
+      const btn = $("statRender");
+      btn.disabled = true;
+      setStatStatus("生成中…");
+      try {
+        const res = await bridge.apiPost("stats/render", {
+          provinces: statProv.selected,
+          fuels: statFuel.selected,
+          days: parseInt($("statDays").value, 10),
+          theme: document.documentElement.classList.contains("dark") ? "dark" : "light"
+        });
+        $("statResult").classList.remove("hidden");
+        renderStatSummary(res.summary || []);
+        let img = $("statChart");
+        if (res.image) {
+          if (!img) {
+            img = document.createElement("img");
+            img.id = "statChart";
+            img.className = "chart-img";
+            img.alt = "油价走势图";
+            img.style.marginTop = "14px";
+            $("statResult").appendChild(img);
+          }
+          img.src = res.image;
+          img.style.display = "";
+        } else if (img) {
+          img.remove();
+        }
+        setStatStatus(res.message || "已生成 " + (res.summary || []).length + " 条走势线", "ok");
+      } catch (e) {
+        setStatStatus("生成失败: " + e.message, "err");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  })();
+})();
+</script>
+</body>
+</html>

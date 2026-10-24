@@ -1,0 +1,167 @@
+{
+  "basic": {
+    "description": "⚙️ 推送设置（请在 WebUI 侧边栏「油价设置」页修改）",
+    "type": "object",
+    "items": {
+      "provinces": {
+        "description": "🏭 推送省份（可多选）",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "options": [
+          "安徽",
+          "北京",
+          "重庆",
+          "福建",
+          "甘肃",
+          "广东",
+          "广西",
+          "贵州",
+          "海南",
+          "河北",
+          "黑龙江",
+          "河南",
+          "湖北",
+          "湖南",
+          "江苏",
+          "江西",
+          "吉林",
+          "辽宁",
+          "内蒙古",
+          "宁夏",
+          "青海",
+          "陕西",
+          "上海",
+          "山东",
+          "山西",
+          "四川",
+          "天津",
+          "西藏",
+          "新疆",
+          "云南",
+          "浙江"
+        ],
+        "default": [
+          "江苏"
+        ],
+        "hint": "每日定时推送与 /今日油价 缺省时使用的省份列表，可多选；多省推送合成为一张长图"
+      },
+      "push_hour": {
+        "description": "⏰ 每日推送时间（小时）",
+        "type": "int",
+        "default": 9
+      },
+      "push_minute": {
+        "description": "⏱️ 每日推送时间（分钟）",
+        "type": "int",
+        "default": 0
+      },
+      "push_frequency": {
+        "description": "🔁 推送频率（daily=每日 / weekly=每周 / on_change=有变动时）",
+        "type": "string",
+        "options": ["daily", "weekly", "on_change"],
+        "default": "daily",
+        "hint": "每日=每天到点推送；每周=仅每周推送日推送；有变动时=到点对比油价快照，有变动才推送"
+      },
+      "push_weekday": {
+        "description": "📅 每周推送日（0=周一 … 6=周日）",
+        "type": "int",
+        "default": 0,
+        "hint": "push_frequency=weekly 时生效"
+      },
+      "change_remind_days": {
+        "description": "🔔 调价提前提醒天数（0=不提醒）",
+        "type": "int",
+        "default": 1,
+        "hint": "weekly / on_change 模式下，距下次调价窗口还剩 N 天时到点额外发一条文字提醒"
+      },
+      "monthly_push": {
+        "description": "📅 每月推送油价走势图",
+        "type": "bool",
+        "default": true,
+        "hint": "每月 1 日向推送目标发送上一月的每日油价折线图"
+      },
+      "notify_private": {
+        "description": "👤 私聊推送目标",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "hint": "UMO 格式：平台:消息类型:用户ID，可多个"
+      },
+      "notify_group": {
+        "description": "👥 群聊推送目标",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "hint": "UMO 格式：平台:消息类型:群号，可多个"
+      },
+      "user_daily_limit": {
+        "description": "🔢 每人每日查询上限",
+        "type": "int",
+        "default": 5,
+        "hint": "设为 0 表示不限制"
+      },
+      "default_fuels": {
+        "description": "⛽ 默认油号（可多选）",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "options": [
+          "92",
+          "95",
+          "98",
+          "0",
+          "89"
+        ],
+        "default": [
+          "92"
+        ],
+        "hint": "卡片展示与 看看油价/我要加油 缺省的油号，可多选"
+      },
+      "target_limits": {
+        "description": "🎯 目标单独限额（UMO→每日上限）",
+        "type": "dict",
+        "default": {},
+        "hint": "每个推送目标的单独每日查询上限；未设置的目标使用全局默认。由「油价设置」页维护"
+      }
+    }
+  },
+  "api": {
+    "description": "🔑 油价接口配置（请在 WebUI 侧边栏「油价设置」页修改）",
+    "type": "object",
+    "items": {
+      "app_key": {
+        "description": "🗝️ ShowAPI appKey",
+        "type": "string",
+        "default": "",
+        "readonly": true,
+        "hint": "万维 ShowAPI 的 appKey，在官方控制台获取后填入。未填写时插件功能不启用"
+      },
+      "zhipu_key": {
+        "description": "🖼️ 智谱 API Key（已废弃，自动忽略）",
+        "type": "string",
+        "default": "",
+        "readonly": true,
+        "hint": "生图已改用 bot 在 AstrBot 中配置的模型提供者（密钥与 api_base 自动继承），无需单独填写"
+      },
+      "gen_model": {
+        "description": "🎨 生图模型",
+        "type": "string",
+        "default": "qwen-image-3.0",
+        "hint": "生图模型名：阿里云百炼 qwen-image-3.0（中文文字最准） / 智谱 glm-image；端点自动匹配 bot 里配置的 provider 平台"
+      },
+      "gen_enable": {
+        "description": "🖼️ 图片消息开关",
+        "type": "bool",
+        "default": true,
+        "hint": "开启且生图端点可用时发送图片消息（每天随机换风格、不连续重复）；关闭或端点不可用只发文字，生图失败自动回退文字"
+      }
+    }
+  }
+}
