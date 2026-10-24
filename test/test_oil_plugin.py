@@ -820,12 +820,12 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
     async def test_a04_today_single_province_image(self):
         ev = MockEvent()
         out = await run_cmd(self.plugin.today_cmd(ev, "广东"))
-        self.assertEqual(out[0]["type"], "chain")
+        self.assertEqual(out[-1]["type"], "chain")
 
     async def test_a05_today_default_multi_image(self):
         ev = MockEvent()
         out = await run_cmd(self.plugin.today_cmd(ev, ""))
-        self.assertEqual(out[0]["type"], "chain")
+        self.assertEqual(out[-1]["type"], "chain")
 
     async def test_a05b_today_multi_province_args(self):
         seen = []
@@ -836,7 +836,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         ):
             ev = MockEvent(message_str="今日油价 广东 上海")
             out = await run_cmd(self.plugin.today_cmd(ev, ""))
-        self.assertEqual(out[0]["type"], "chain")
+        self.assertEqual(out[-1]["type"], "chain")
         self.assertIn("广东", seen)
         self.assertIn("上海", seen)
         self.assertNotIn("江苏", seen)
@@ -850,7 +850,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         ):
             ev = MockEvent(message_str="今日油价 广东")
             out = await run_cmd(self.plugin.today_cmd(ev, ""))
-        self.assertEqual(out[0]["type"], "chain")
+        self.assertEqual(out[-1]["type"], "chain")
         self.assertEqual(seen, ["广东"])
 
     async def test_a06_today_render_fail_text_fallback(self):
@@ -859,7 +859,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             plugin_main.genimage, "generate", side_effect=RuntimeError("生图平台不可用")
         ):
             out = await run_cmd(self.plugin.today_cmd(ev, "广东"))
-        self.assertIn("今日油价速览", out[0]["text"])
+        self.assertIn("今日油价速览", out[-1]["text"])
 
     async def test_a07_look_hit(self):
         ev = MockEvent()

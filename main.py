@@ -549,6 +549,9 @@ class OilPricePlugin(Star):
                     reporting.build_multi_text(rows, self.prefs.default_fuels()) + hint
                 )
             return
+        yield event.plain_result(
+            f"⏳ 收到喵，正在查询{'、'.join(provs)}油价并生成海报（约需几十秒），请稍等～"
+        )
         try:
             if len(provs) == 1 and rows:
                 prov, data = rows[0]
