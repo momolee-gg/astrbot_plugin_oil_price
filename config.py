@@ -3,6 +3,8 @@
 只依赖 modules.constants；main.py 的指令与 Web API 均经由本模块取值/写入。
 """
 
+import logging
+
 from .modules.constants import (
     DATASOURCE,
     DEFAULT_FUELS,
@@ -13,6 +15,9 @@ from .modules.constants import (
     PROVINCES,
     REGISTER_URL,
 )
+
+_log = logging.getLogger(__name__)
+_on_change_warned = False
 
 
 class Prefs:
@@ -48,9 +53,22 @@ class Prefs:
         return bool(self._get("api", "gen_enable", True))
 
     def push_frequency(self) -> str:
-        """推送频率：daily=每日 / weekly=每周 / on_change=有变动时。"""
+        """推送频率：daily=每日 / weekly=每周 / off=关闭常规推送（调价提醒独立生效）。
+
+        旧值 on_change（有变动时）自 v1.1 起并入调价提醒（oil_1001 D2），
+        读取时自动按 off 迁移，行为等价：平时静默 + 调价落地推送。
+        """
+        global _on_change_warned
         v = str(self._get("basic", "push_frequency", "daily") or "daily").strip()
-        return v if v in ("daily", "weekly", "on_change") else "daily"
+        if v == "on_change":
+            if not _on_change_warned:
+                _on_change_warned = True
+                _log.info(
+                    "[油价插件] 检测到旧配置 push_frequency=on_change，"
+                    "已自动迁移为 off（关闭常规推送）；调价提醒仍按 change_remind_days 生效"
+                )
+            return "off"
+        return v if v in ("daily", "weekly", "off") else "daily"
 
     def push_weekday(self) -> int:
         """每周推送日（0=周一 … 6=周日），weekly 频率时使用。"""
@@ -61,12 +79,19 @@ class Prefs:
         return v if 0 <= v <= 6 else 0
 
     def change_remind_days(self) -> int:
-        """调价提前提醒天数（0=不提醒），weekly/on_change 频率时生效。"""
+        """调价提醒天数（0=关闭整个调价提醒：预告 + 落地确认），任意推送频率下生效。
+
+        预告语义：距下次调价窗口剩余 ≤ N 天时每日一条（oil_1001 D3）。
+        """
         try:
             v = int(self._get("basic", "change_remind_days", 1))
         except (TypeError, ValueError):
             return 1
         return v if 0 <= v <= 3 else 1
+
+    def auto_provinces(self) -> bool:
+        """推送省份自适应开关（oil_1001 D10）：开=推送与缺省查询按目标近期查询偏好选省。"""
+        return bool(self._get("basic", "auto_provinces", False))
 
     def provinces(self) -> list:
         """已配置省份（校验+去重），空/非法时回退默认省。"""
@@ -215,6 +240,7 @@ class Prefs:
             "push_frequency": self.push_frequency(),
             "push_weekday": self.push_weekday(),
             "change_remind_days": self.change_remind_days(),
+            "auto_provinces": self.auto_provinces(),
             "monthly_push": self.monthly_push_enabled(),
             "gen_enable": self.gen_enable(),
             "gen_model": self.gen_model(),
@@ -276,13 +302,21 @@ class Prefs:
             else str(monthly).lower() in ("1", "true", "on")
         )
 
-        # 推送频率 / 每周推送日 / 变动提前提醒
+        # 推送频率 / 每周推送日 / 调价提醒 / 省份自适应
         freq = str(payload.get("push_frequency", "daily") or "daily").strip()
-        if freq not in ("daily", "weekly", "on_change"):
-            errors.append("推送频率必须是 daily / weekly / on_change")
+        if freq == "on_change":  # 旧页面缓存可能仍提交旧值，按迁移规则处理
+            freq = "off"
+        if freq not in ("daily", "weekly", "off"):
+            errors.append("推送频率必须是 daily / weekly / off")
             freq = None
         weekday = _int_in("push_weekday", 0, 6, "每周推送日", required=False)
-        remind = _int_in("change_remind_days", 0, 3, "调价提前提醒天数", required=False)
+        remind = _int_in("change_remind_days", 0, 3, "调价提醒天数", required=False)
+        auto_prov = payload.get("auto_provinces", False)
+        auto_prov = (
+            bool(auto_prov)
+            if isinstance(auto_prov, bool)
+            else str(auto_prov).lower() in ("1", "true", "on")
+        )
 
         # 图片消息开关与生图模型
         gen_enable = payload.get("gen_enable", True)
@@ -368,6 +402,7 @@ class Prefs:
             basic["push_weekday"] = weekday
         if remind is not None:
             basic["change_remind_days"] = remind
+        basic["auto_provinces"] = auto_prov
         basic["monthly_push"] = monthly
         basic["notify_private"], basic["notify_group"] = priv_ids, group_ids
         target_limits = {}

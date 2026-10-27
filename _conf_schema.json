@@ -58,11 +58,11 @@
         "default": 0
       },
       "push_frequency": {
-        "description": "🔁 推送频率（daily=每日 / weekly=每周 / on_change=有变动时）",
+        "description": "🔁 推送频率（daily=每日 / weekly=每周 / off=关闭）",
         "type": "string",
-        "options": ["daily", "weekly", "on_change"],
+        "options": ["daily", "weekly", "off"],
         "default": "daily",
-        "hint": "每日=每天到点推送；每周=仅每周推送日推送；有变动时=到点对比油价快照，有变动才推送"
+        "hint": "每日=每天到点推送；每周=仅每周推送日推送；关闭=不发常规推送，调价提醒与月度图照常"
       },
       "push_weekday": {
         "description": "📅 每周推送日（0=周一 … 6=周日）",
@@ -71,10 +71,16 @@
         "hint": "push_frequency=weekly 时生效"
       },
       "change_remind_days": {
-        "description": "🔔 调价提前提醒天数（0=不提醒）",
+        "description": "🔔 调价提醒（0=关闭）",
         "type": "int",
         "default": 1,
-        "hint": "weekly / on_change 模式下，距下次调价窗口还剩 N 天时到点额外发一条文字提醒"
+        "hint": "任意推送频率下生效：距调价窗口剩余 ≤ N 天时每日一条提醒（AI 图片，失败回退文字）+ 调价落地后推送最新油价"
+      },
+      "auto_provinces": {
+        "description": "🧭 推送省份自适应",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后推送与缺省查询按会话内最近查询的省份自动选择（私聊按本人、群聊按成员聚合），不足时回退已配置省份"
       },
       "monthly_push": {
         "description": "📅 每月推送油价走势图",
