@@ -1,14 +1,15 @@
-"""油价插件自动化测试（astrbot_plugin_oil_price v1.0.0）。
+"""油价插件自动化测试（astrbot_plugin_oil_price v1.1.0）。
 
 运行方式（容器内）：
     cd /AstrBot/data/plugins && python3 -m unittest astrbot_plugin_oil_price.tests.test_oil_plugin -v
 
+本地（无容器，Windows 开发机）：python test/run_local.py
+（用 test/_local 的最小 astrbot 桩满足 import 面，逻辑为真实实现）
+
 隔离策略：
-    - 全部读写走 /tmp/oil_plugin_test/，不触碰真实配置/历史/配额；
+    - 全部读写走测试临时目录，不触碰真实配置/历史/配额；
     - ShowAPI 请求默认全部 mock（OIL_LIVE=1 时额外执行真实冒烟，消耗 1 次配额）；
     - 推送目标使用 MockContext，不发送真实 QQ 消息。
-
-对应用例编号见 docs/05-测试案例-v1.0.0.md（TC-xx）。
 """
 
 import asyncio
@@ -155,11 +156,24 @@ def make_plugin(name="t", config=None, appkey="test-key-123"):
     plugin_main.DATA_DIR = os.path.join(sub, "data")
     plugin_main.HISTORY_FILE = os.path.join(sub, "history.json")
     plugin_main.QUOTA_FILE = os.path.join(sub, "quota.json")
+    plugin_main.EVENTS_FILE = os.path.join(sub, "events.json")
     plugin_main.TMP_DIR = os.path.join(sub, "tmp")
     cfg = config if config is not None else base_config(appkey=appkey)
     ctx = MockContext()
     pl = plugin_main.OilPricePlugin(ctx, cfg)
     return pl, ctx, cfg
+
+
+def fetch_with_window(days_ahead: int, p92: float = 8.09):
+    """构造返回指定调价窗口天数的 fetch 假实现（矩阵/提醒用例用）。"""
+    target = (datetime.now().date() + timedelta(days=days_ahead)).strftime("%Y%m%d")
+
+    def fake(prov, key):
+        d = fake_price_data(p92 if prov != "上海" else 8.05)
+        d["next_change_time"] = target
+        return d
+
+    return fake
 
 
 async def run_cmd(gen):
@@ -447,6 +461,86 @@ class TestStorage(unittest.TestCase):
         self.assertTrue(ok)
 
 
+# ======================= 查询偏好事件与省份聚合（oil_1001 F7/F8） =======================
+
+
+class TestQueryEvents(unittest.TestCase):
+    def setUp(self):
+        d = os.path.join(TEST_ROOT, "events", self.id().split(".")[-1])
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d, exist_ok=True)
+        self.store = Store(
+            os.path.join(d, "history.json"),
+            os.path.join(d, "quota.json"),
+            os.path.join(d, "events.json"),
+        )
+
+    def test_f07_record_and_rolling_50(self):
+        for i in range(55):
+            self.store.record_query("umo1", f"u{i % 3}", [f"省{i}"])
+        events = self.store.query_events("umo1")
+        self.assertEqual(len(events), 50)
+        self.assertEqual(events[0]["p"], ["省5"])  # 最旧的 5 条被挤出
+        self.assertEqual(events[-1]["p"], ["省54"])
+        self.assertEqual(self.store.query_events("umo2"), [])
+
+    def test_f07_no_events_file_noop(self):
+        store = Store("a.json", "b.json")  # 未启用事件文件的旧构造方式
+        store.record_query("umo", "u", ["江苏"])
+        self.assertEqual(store.query_events("umo"), [])
+
+    def test_f08_picker_fallback_and_top(self):
+        from astrbot_plugin_oil_price.modules.storage import (
+            pick_preferred_provinces as pick,
+        )
+
+        self.assertIsNone(pick([]))
+        self.assertIsNone(pick([{"u": "a", "p": ["江苏"]}, {"u": "a", "p": ["上海"]}]))
+        # 4 个近期省份只取前 3
+        events = [
+            {"u": "a", "p": ["江苏"]},
+            {"u": "a", "p": ["上海"]},
+            {"u": "a", "p": ["浙江"]},
+            {"u": "a", "p": ["安徽"]},
+        ]
+        self.assertEqual(pick(events), ["安徽", "浙江", "上海"])
+
+    def test_f08_picker_private_recency(self):
+        """私聊：按本人每省最近一次，最新查询的省排前。"""
+        from astrbot_plugin_oil_price.modules.storage import (
+            pick_preferred_provinces as pick,
+        )
+
+        events = [
+            {"u": "me", "p": ["江苏"]},
+            {"u": "me", "p": ["广东"]},
+            {"u": "me", "p": ["江苏"]},  # 江苏更近
+        ]
+        self.assertEqual(pick(events), ["江苏", "广东"])
+
+    def test_f08_picker_group_member_dedup(self):
+        """群聊：单人高频刷屏不能淹没其他成员的省份（按成员×省份去重 + 近期优先）。"""
+        from astrbot_plugin_oil_price.modules.storage import (
+            pick_preferred_provinces as pick,
+        )
+
+        events = [{"u": "刷子", "p": ["广东"]}] * 15
+        events.insert(5, {"u": "路人甲", "p": ["广东"]})
+        events.insert(6, {"u": "路人乙", "p": ["上海"]})  # 仅查 1 次
+        picked = pick(events)
+        # 上海仅 1 次仍入选（不被 15 次刷屏挤出）——去重后频次不再起作用
+        self.assertEqual(picked, ["广东", "上海"])
+
+    def test_f08_picker_window_20(self):
+        """只看最近 20 条：更早查过的省不再参与。"""
+        from astrbot_plugin_oil_price.modules.storage import (
+            pick_preferred_provinces as pick,
+        )
+
+        events = [{"u": "a", "p": ["四川"]}] * 5 + [{"u": "a", "p": ["广东"]}] * 20
+        self.assertEqual(pick(events), ["广东"])
+
+
 # ======================= 数据源（TC-G01~G05） =======================
 
 
@@ -645,6 +739,27 @@ class TestCharts(unittest.TestCase):
         buf = charts.png_bytes(charts.line_chart_image(lines, "油价走势", "近 10 天"))
         self.assertTrue(buf[:8] == b"\x89PNG\r\n\x1a\n")
 
+    def test_f10_line_chart_ui_mode(self):
+        """F10：WebUI 页面模式窄画布（760），QQ 推送默认版式（1040）不变。"""
+        lines = [
+            {
+                "label": "江苏 92#",
+                "points": [("2026-10-01", 8.0), ("2026-10-02", 8.2), ("2026-10-03", 8.1)],
+            },
+            {
+                "label": "上海 92#",
+                "points": [("2026-10-01", 8.1), ("2026-10-02", 8.0), ("2026-10-03", 8.3)],
+            },
+        ]
+        for theme in ("light", "dark"):
+            img = charts.line_chart_image(
+                lines, "油价走势", "近 3 天", theme=theme, ui=True
+            )
+            self.assertEqual(img.size, (760, 600))
+            self.assertTrue(charts.png_bytes(img)[:8] == b"\x89PNG\r\n\x1a\n")
+        img_qq = charts.line_chart_image(lines, "油价走势", "近 3 天")
+        self.assertEqual(img_qq.size, (1040, 620))
+
     def test_f07_line_chart_empty(self):
         buf = charts.png_bytes(charts.line_chart_image([], "油价走势", ""))
         self.assertTrue(buf[:8] == b"\x89PNG\r\n\x1a\n")
@@ -703,6 +818,22 @@ class TestGenImage(unittest.TestCase):
         with self.assertRaises(genimage.GenImageError):
             genimage.prompt_from_text("   ")
 
+    def test_oil1001_prompt_multi_countdown_lines(self):
+        """F6：多省调价提醒的每一条倒计时行都进提示词（修复只取第一行的缺陷）。"""
+        from astrbot_plugin_oil_price.modules import genimage
+
+        text = (
+            "🚨🚨 调价提醒 🚨🚨\n"
+            "⛽ 江苏：距下次调价窗口（10月30日 24时）还有 1 天\n"
+            "⛽ 广东：明晚 24 时调价窗口开启！要加油的今晚抓紧"
+        )
+        prompt = genimage.prompt_from_text(text)
+        self.assertIn("江苏：距下次调价窗口（10月30日 24时）还有 1 天", prompt)
+        self.assertIn("广东：明晚 24 时调价窗口开启！要加油的今晚抓紧", prompt)
+        self.assertIn("第1行", prompt)
+        self.assertIn("第2行", prompt)
+        self.assertIn("无油价数据区", prompt)  # 无价格行时不画空面板
+
     def test_endpoints_from_provider_config(self):
         from astrbot_plugin_oil_price.modules import genimage
 
@@ -756,6 +887,7 @@ class TestGenImage(unittest.TestCase):
         self.assertEqual(p.push_frequency(), "weekly")
         self.assertEqual(p.push_weekday(), 5)
         self.assertEqual(p.change_remind_days(), 2)
+        self.assertFalse(p.auto_provinces())
         p2 = Prefs(
             {
                 "basic": {
@@ -768,6 +900,52 @@ class TestGenImage(unittest.TestCase):
         self.assertEqual(p2.push_frequency(), "daily")
         self.assertEqual(p2.push_weekday(), 0)
         self.assertEqual(p2.change_remind_days(), 1)
+
+    def test_oil1001_on_change_migration(self):
+        """F5：旧值 on_change 读取与 Web 提交均自动迁移为 off。"""
+        from astrbot_plugin_oil_price.config import Prefs
+
+        self.assertEqual(
+            Prefs({"basic": {"push_frequency": "on_change"}}).push_frequency(), "off"
+        )
+        self.assertEqual(
+            Prefs({"basic": {"push_frequency": "off"}}).push_frequency(), "off"
+        )
+        prefs = Prefs(base_config())
+        payload = self._valid_push_payload()
+        payload["push_frequency"] = "on_change"
+        self.assertEqual(prefs.apply_web_update(payload), [])
+        self.assertEqual(prefs.config["basic"]["push_frequency"], "off")
+        payload["push_frequency"] = "sometimes"
+        self.assertTrue(any("推送频率" in e for e in prefs.apply_web_update(payload)))
+
+    def test_oil1001_auto_provinces_web_roundtrip(self):
+        from astrbot_plugin_oil_price.config import Prefs
+
+        prefs = Prefs(base_config())
+        payload = self._valid_push_payload()
+        payload["auto_provinces"] = True
+        self.assertEqual(prefs.apply_web_update(payload), [])
+        self.assertTrue(prefs.config["basic"]["auto_provinces"])
+        rebuilt = Prefs(prefs.config)
+        self.assertTrue(rebuilt.auto_provinces())
+        self.assertTrue(rebuilt.web_payload()["auto_provinces"])
+
+    @staticmethod
+    def _valid_push_payload():
+        return {
+            "provinces": ["江苏"],
+            "push_hour": 9,
+            "push_minute": 0,
+            "push_frequency": "off",
+            "change_remind_days": 1,
+            "monthly_push": True,
+            "private_targets": [],
+            "group_targets": [{"id": "10001", "limit": None}],
+            "user_daily_limit": 5,
+            "default_fuels": ["92"],
+            "app_key": "k",
+        }
 
 
 # ======================= 指令 + 推送 + WebAPI（异步） =======================
@@ -1060,47 +1238,60 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(type(p).__name__.endswith("Plain") for p in parts))
         self.assertFalse(any(type(p).__name__.endswith("Image") for p in parts))
 
-    async def test_b11_on_change_baseline_then_push(self):
-        self.cfg["basic"]["push_frequency"] = "on_change"
+    async def test_b11_off_mode_baseline_then_change_push(self):
+        """F1/F2：off + 调价提醒 = 原 on_change 行为——首次仅记基线，价格变动推送。"""
+        self.cfg["basic"]["push_frequency"] = "off"
+        self.cfg["basic"]["change_remind_days"] = 1
         self.cfg["basic"]["provinces"] = ["江苏"]
-        self.plugin._pushed_date = datetime.now().strftime("%Y-%m-%d")
         price = {"v": 8.09}
-        with mock.patch.object(
-            plugin_main.datasource,
-            "fetch_province",
-            side_effect=lambda prov, key: fake_price_data(price["v"]),
-        ):
-            today = datetime.now().strftime("%Y-%m-%d")
-            await self.plugin._on_change_push(today)  # 首次：仅记录基线
+        far_target = (datetime.now().date() + timedelta(days=9)).strftime("%Y%m%d")
+
+        def fake(prov, key):
+            d = fake_price_data(price["v"])
+            d["next_change_time"] = far_target
+            return d
+
+        with mock.patch.object(plugin_main.datasource, "fetch_province", side_effect=fake):
+            await self.plugin._push_round(datetime.now())  # 首次：仅记录基线
             self.assertEqual(len(self.ctx.sent_messages), 0)
-            price["v"] = 8.30  # 价格变动
+            price["v"] = 8.30  # 价格变动（调价落地）
             h = self.plugin.store.history()  # 清当日缓存强制重新抓取
             h["江苏"].pop(self.plugin.store.today(), None)
             self.plugin.store._save(self.plugin.store.history_file, h)
-            await self.plugin._on_change_push(today)  # 有变动：推送
+            await self.plugin._push_round(datetime.now())  # 有变动：推送
             self.assertGreaterEqual(len(self.ctx.sent_messages), 1)
+            n = len(self.ctx.sent_messages)
+            await self.plugin._push_round(datetime.now())  # 价格未再变：不重复
+            self.assertEqual(len(self.ctx.sent_messages), n)
 
-    async def test_b12_advance_remind_once_per_day(self):
-        self.cfg["basic"]["push_frequency"] = "on_change"
+    async def test_b12_advance_remind_gating_and_daily_dedup(self):
+        """F1/F6：预告按「剩余 ≤ N 天」门控（修复旧版任意天数都发），且每日一条。"""
         self.cfg["basic"]["change_remind_days"] = 1
         self.cfg["basic"]["provinces"] = ["江苏"]
-        tomorrow = (datetime.now().date() + timedelta(days=1)).strftime("%Y%m%d")
-
-        def fake_data(prov, key):
-            d = fake_price_data()
-            d["next_change_time"] = tomorrow
-            return d
-
         with mock.patch.object(
-            plugin_main.datasource, "fetch_province", side_effect=fake_data
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(4)
         ):
-            today = datetime.now().strftime("%Y-%m-%d")
-            await self.plugin._advance_remind(today)
+            rows = await self.plugin._collect_today(["江苏"])
+            await self.plugin._advance_remind(rows)  # 剩余 4 天 > N=1：不发
+            self.assertEqual(len(self.ctx.sent_messages), 0)
+        self.cfg["basic"]["change_remind_days"] = 3
+        with mock.patch.object(
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(4)
+        ):
+            await self.plugin._advance_remind(rows)  # 剩余 4 天 > N=3：仍不发
+            self.assertEqual(len(self.ctx.sent_messages), 0)
+        self.cfg["basic"]["change_remind_days"] = 1
+        with mock.patch.object(
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+        ):
+            h = self.plugin.store.history()  # 清当日缓存，拿到新窗口日期
+            h["江苏"].pop(self.plugin.store.today(), None)
+            self.plugin.store._save(self.plugin.store.history_file, h)
+            rows = await self.plugin._collect_today(["江苏"])
+            await self.plugin._advance_remind(rows)  # 剩余 1 天 ≤ N：单省=文字+图片
+            self.assertGreaterEqual(len(self.ctx.sent_messages), 2)
             n = len(self.ctx.sent_messages)
-            self.assertGreaterEqual(n, 1)
-            first = self.ctx.sent_messages[0][1].chain
-            self.assertTrue(any(type(p).__name__.endswith("Plain") for p in first))
-            await self.plugin._advance_remind(today)  # 同日去重
+            await self.plugin._advance_remind(rows)  # 同日去重
             self.assertEqual(len(self.ctx.sent_messages), n)
 
     async def test_b09_daily_loop_dedup(self):
@@ -1110,14 +1301,14 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.cfg["basic"]["push_minute"] = now.minute
         self.plugin._pushed_date = None
 
-        async def fake_push():
+        async def fake_round(now_dt):
             calls.append(1)
 
         async def boom(seconds):
             raise asyncio.CancelledError()
 
         with (
-            mock.patch.object(self.plugin, "_daily_push", fake_push),
+            mock.patch.object(self.plugin, "_push_round", fake_round),
             mock.patch.object(plugin_main.asyncio, "sleep", boom),
         ):
             with self.assertRaises(asyncio.CancelledError):
@@ -1127,12 +1318,185 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         calls.clear()
 
         with (
-            mock.patch.object(self.plugin, "_daily_push", fake_push),
+            mock.patch.object(self.plugin, "_push_round", fake_round),
             mock.patch.object(plugin_main.asyncio, "sleep", boom),
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await self.plugin._daily_loop()
         self.assertEqual(len(calls), 0)  # 同日去重
+
+    # ---------- oil_1001：推送轮矩阵（频率 × 调价提醒） ----------
+
+    async def test_oil1001_matrix_freq_x_remind(self):
+        """多省场景消息数矩阵：daily/weekly/off × 提醒开关 × 窗口距离。
+
+        多省形态：常规卡片=1 图；调价预告=1 图；off 且窗口远=0（静默）。
+        """
+        cases = [
+            # (freq, remind_days, window_days, expect_msgs)
+            ("daily", 0, 5, 1),  # 仅常规卡片
+            ("daily", 1, 5, 1),  # 窗口远：无预告
+            ("daily", 1, 1, 2),  # 窗口明天：卡片 + 独立预告（多省卡片无倒计时）
+            ("daily", 3, 3, 2),  # 剩余 3 ≤ N=3：卡片 + 预告
+            ("weekly", 0, 1, 0),  # 非每周推送日：静默
+            ("weekly", 1, 1, 1),  # 非推送日但调价提醒独立生效
+            ("off", 0, 1, 0),  # 全关：完全静默
+            ("off", 1, 5, 0),  # off 且窗口远：静默（复刻 on_change 平日行为）
+            ("off", 1, 1, 1),  # off + 窗口明天：仅预告
+        ]
+        for freq, remind, window, expect in cases:
+            with self.subTest(freq=freq, remind=remind, window=window):
+                pl, ctx, cfg = make_plugin(name=f"mx_{freq}_{remind}_{window}")
+                try:
+                    cfg["basic"]["push_frequency"] = freq
+                    cfg["basic"]["change_remind_days"] = remind
+                    if freq == "weekly":
+                        cfg["basic"]["push_weekday"] = (datetime.now().weekday() + 1) % 7
+                    with (
+                        mock.patch.object(
+                            plugin_main.datasource,
+                            "fetch_province",
+                            side_effect=fetch_with_window(window),
+                        ),
+                        mock.patch.object(
+                            plugin_main.genimage, "generate", _fake_genimage_generate
+                        ),
+                    ):
+                        await pl._push_round(datetime.now())
+                    self.assertEqual(len(ctx.sent_messages), expect)
+                finally:
+                    for t in pl._tasks:
+                        t.cancel()
+
+    async def test_oil1001_single_prov_countdown_dedup(self):
+        """F3：单省常规卡片自带倒计时行，当天预告不重发（daily+提醒=仅 2 条）。"""
+        self.cfg["basic"]["push_frequency"] = "daily"
+        self.cfg["basic"]["change_remind_days"] = 1
+        self.cfg["basic"]["provinces"] = ["江苏"]
+        with mock.patch.object(
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+        ):
+            await self.plugin._push_round(datetime.now())
+        # 单省卡片 = 文字 + 图片两条，预告被去重
+        self.assertEqual(len(self.ctx.sent_messages), 2)
+
+    async def test_oil1001_off_snapshot_first_baseline_no_push(self):
+        """F1：快照首次仅记基线不推送（升级/新省份集不轰炸）。"""
+        self.cfg["basic"]["push_frequency"] = "off"
+        self.cfg["basic"]["change_remind_days"] = 1
+        with mock.patch.object(
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(9)
+        ):
+            await self.plugin._push_round(datetime.now())
+        self.assertEqual(len(self.ctx.sent_messages), 0)
+
+    # ---------- oil_1001：省份自适应（F7~F9） ----------
+
+    async def test_oil1001_sets_grouping_two_sets(self):
+        """两个目标偏好不同 → 两个省份集，各自生成一次（生图 2 次、互不影响）。"""
+        self.cfg["basic"]["auto_provinces"] = True
+        self.cfg["basic"]["notify_group"] = [
+            "default:GroupMessage:10001",
+            "default:GroupMessage:20002",
+        ]
+        for _ in range(3):
+            self.plugin.store.record_query("default:GroupMessage:10001", "u1", ["广东"])
+            self.plugin.store.record_query("default:GroupMessage:20002", "u2", ["四川"])
+        gen_calls = []
+
+        def fake_gen(
+            prompt, endpoints, model=None, size=None, out_dir="/tmp", name="g.png"
+        ):
+            gen_calls.append(name)
+            return _fake_genimage_generate(prompt, endpoints, model, size, out_dir, name)
+
+        with (
+            mock.patch.object(
+                plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(9)
+            ),
+            mock.patch.object(plugin_main.genimage, "generate", fake_gen),
+        ):
+            await self.plugin._push_round(datetime.now())
+        self.assertEqual(len(gen_calls), 2)  # 两个省份集各生成一次
+        self.assertTrue(any("广东" in n for n in gen_calls))
+        self.assertTrue(any("四川" in n for n in gen_calls))
+        # 每目标单省=文字+图片两条
+        got = {umo for umo, _ in self.ctx.sent_messages}
+        self.assertEqual(got, {"default:GroupMessage:10001", "default:GroupMessage:20002"})
+        self.assertEqual(len(self.ctx.sent_messages), 4)
+
+    async def test_oil1001_same_set_shared_generation(self):
+        """省份集相同的目标共享一次生成（生图 1 次，两目标都收到）。"""
+        self.cfg["basic"]["auto_provinces"] = True
+        self.cfg["basic"]["notify_group"] = [
+            "default:GroupMessage:10001",
+            "default:GroupMessage:20002",
+        ]
+        for _ in range(3):
+            self.plugin.store.record_query("default:GroupMessage:10001", "u1", ["广东"])
+            self.plugin.store.record_query("default:GroupMessage:20002", "u2", ["广东"])
+        gen_calls = []
+
+        def fake_gen(
+            prompt, endpoints, model=None, size=None, out_dir="/tmp", name="g.png"
+        ):
+            gen_calls.append(name)
+            return _fake_genimage_generate(prompt, endpoints, model, size, out_dir, name)
+
+        with (
+            mock.patch.object(
+                plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(9)
+            ),
+            mock.patch.object(plugin_main.genimage, "generate", fake_gen),
+        ):
+            await self.plugin._push_round(datetime.now())
+        self.assertEqual(len(gen_calls), 1)
+        self.assertEqual(len(self.ctx.sent_messages), 4)
+
+    async def test_oil1001_fallback_to_configured(self):
+        """F8：auto_provinces 开但记录不足 → 回退配置省份。"""
+        self.cfg["basic"]["auto_provinces"] = True
+        self.plugin.store.record_query(
+            "default:GroupMessage:10001", "u1", ["广东"]
+        )  # 仅 1 条
+        provs = self.plugin._resolve_provinces_for("default:GroupMessage:10001")
+        self.assertEqual(provs, self.plugin.prefs.provinces())  # ["江苏", "上海"]
+
+    async def test_oil1001_bare_cmd_uses_preferred_province(self):
+        """F9：裸 /油价 缺省省份按会话近期查询偏好。"""
+        self.cfg["basic"]["auto_provinces"] = True
+        for _ in range(3):
+            self.plugin.store.record_query("default:GroupMessage:10001", "u1", ["广东"])
+        ev = MockEvent()
+        out = await run_cmd(self.plugin.oil_price_cmd(ev, ""))
+        self.assertIn("【广东】", out[0]["text"])  # 缺省按偏好单省
+        self.assertNotIn("【上海】", out[0]["text"])
+
+    async def test_oil1001_command_records_query_event(self):
+        """F7：主动查询成功后记录事件（推送拉取不计）。"""
+        ev = MockEvent()
+        await run_cmd(self.plugin.oil_price_cmd(ev, "广东"))
+        events = self.plugin.store.query_events("default:GroupMessage:10001")
+        self.assertTrue(events)
+        self.assertEqual(events[-1]["p"], ["广东"])
+        self.assertEqual(events[-1]["u"], "tester")
+
+    async def test_oil1001_state_pruned_to_current_sets(self):
+        """F9：快照/预告去重状态只保留当前省份集。"""
+        self.cfg["basic"]["change_remind_days"] = 1
+        st = self.plugin._load_push_state()
+        st["price_snaps"] = {"旧省集": {"江苏": {"92": 8.0}}, "江苏、上海": {}}
+        st["remind_done"] = {"旧省集": "2026-10-01"}
+        self.plugin._save_push_state(st)
+        with mock.patch.object(
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+        ):
+            await self.plugin._push_round(
+                datetime.now()
+            )  # 预告触发，remind_done 写入当前集
+        st2 = self.plugin._load_push_state()
+        self.assertEqual(set(st2.get("price_snaps")), {"江苏、上海"})
+        self.assertEqual(set(st2.get("remind_done")), {"江苏、上海"})
 
     # ---------- Web API（TC-D/C16/H03） ----------
     async def test_d01_config_get_payload(self):
@@ -1143,6 +1507,9 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             "provinces",
             "push_hour",
             "push_minute",
+            "push_frequency",
+            "change_remind_days",
+            "auto_provinces",
             "monthly_push",
             "private_targets",
             "group_targets",
