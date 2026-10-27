@@ -122,7 +122,7 @@ def prompt_from_text(text: str, style: str = "") -> str:
     spec.append(f"1. 顶部标题区：左右各一个红色警灯插画图标，中间大字标题「{title}」")
 
     for ln in rest:
-        if "距下次调价窗口" in ln:
+        if "调价窗口" in ln:  # 覆盖「距下次…」「明晚…」「就是今晚…」等倒计时行
             countdown.append(ln)
         elif "元/升" in ln:
             rows.append(ln)
@@ -138,26 +138,28 @@ def prompt_from_text(text: str, style: str = "") -> str:
     else:
         spec.append("2. （无省份信息行，跳过）")
 
-    spec.append(
-        f"3. 中部白色圆角数据面板：{len(rows)} 行油价数据，每行一个条目，"
-        f"多行严格左对齐——油号名称、冒号、价格、单位逐列上下对齐："
-    )
-    for i, row in enumerate(rows, 1):
-        m = _ROW_CHANGE_RE.match(row)
-        if m:
-            chg = m.group("chg").strip()
-            pill = "红色" if chg.startswith("↑") else "绿色"
-            spec.append(
-                f"   第{i}行「{m.group('main').strip()}」，"
-                f"行尾画一个醒目的{pill}圆角小胶囊，胶囊内白字「{chg}」"
-            )
-        else:
-            spec.append(f"   第{i}行「{_strip_emoji(row)}」")
     if rows:
+        spec.append(
+            f"3. 中部白色圆角数据面板：{len(rows)} 行油价数据，每行一个条目，"
+            f"多行严格左对齐——油号名称、冒号、价格、单位逐列上下对齐："
+        )
+        for i, row in enumerate(rows, 1):
+            m = _ROW_CHANGE_RE.match(row)
+            if m:
+                chg = m.group("chg").strip()
+                pill = "红色" if chg.startswith("↑") else "绿色"
+                spec.append(
+                    f"   第{i}行「{m.group('main').strip()}」，"
+                    f"行尾画一个醒目的{pill}圆角小胶囊，胶囊内白字「{chg}」"
+                )
+            else:
+                spec.append(f"   第{i}行「{_strip_emoji(row)}」")
         spec.append(
             "   胶囊只用一个统一的粗箭头符号（上涨用红色向上箭头、下跌用绿色向下箭头），"
             "严禁混用闪电、菱形、火苗等其他符号；胶囊之外不得再画任何涨幅符号"
         )
+    else:
+        spec.append("3. （无油价数据区，跳过，不要画空面板）")
 
     if notice:
         notice_txt = "；".join(_strip_emoji(ln) for ln in notice)
@@ -170,10 +172,21 @@ def prompt_from_text(text: str, style: str = "") -> str:
         spec.append("4. （无提示区，跳过）")
 
     if countdown:
-        cd = _strip_emoji(countdown[0])
-        spec.append(
-            f"5. 底部倒计时区：红色日历插画图标 + 「{cd}」，天数数字用特大号红色突出"
-        )
+        if len(countdown) == 1:
+            spec.append(
+                f"5. 底部倒计时区：红色日历插画图标 + 「{_strip_emoji(countdown[0])}」，"
+                f"剩余天数数字用特大号红色突出"
+            )
+        else:
+            # 多省调价提醒：每省一行倒计时，逐行画全、严禁丢行改数（oil_1001 F6）
+            spec.append(
+                f"5. 底部倒计时区：红色日历插画图标，共 {len(countdown)} 行省份数据，"
+                f"每行一条、上下整齐排列："
+            )
+            for i, cd in enumerate(countdown, 1):
+                spec.append(
+                    f"   第{i}行「{_strip_emoji(cd)}」，行内剩余天数数字用大号红色突出"
+                )
     else:
         spec.append("5. （无倒计时区，跳过）")
 

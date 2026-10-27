@@ -49,6 +49,11 @@ def _days_until(next_time: str) -> tuple:
     return (target.date() - datetime.now().date()).days, target.strftime("%m月%d日")
 
 
+def days_until(next_time: str) -> tuple:
+    """_days_until 的公开别名（调价提醒判断剩余天数用）。"""
+    return _days_until(next_time)
+
+
 def adjust_countdown_text(next_time: str) -> str:
     """不含换行的调价倒计时短句，无窗口时返回空串。"""
     days, d_str = _days_until(next_time)

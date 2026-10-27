@@ -1647,16 +1647,43 @@ def render_receipt(
 # ==================== 折线图（统计） ====================
 
 
+# WebUI 页面模式（ui=True）的刻度/图例文字色：对齐页面正文灰，替代默认更浅的 c_sub
+_UI_TICK_LIGHT = (96, 98, 105)  # ≈ 页面正文 #606266
+_UI_TICK_DARK = (216, 220, 228)
+
+
 def line_chart_image(
-    lines: list, title: str, subtitle: str = "", theme: str = "dark"
+    lines: list, title: str, subtitle: str = "", theme: str = "dark", ui: bool = False
 ) -> Image.Image:
     """油价走势折线图。
 
     lines: [{"label": "江苏 92#", "points": [("2026-10-01", 8.09), ...]}, ...]
     点按日期升序；缺日不连线断点（按已有点直接相连）。
-    theme: dark（默认，QQ 推送用）/ light（WebUI 统计页浅色模式）。
+    theme: dark（QQ 推送用）/ light（WebUI 统计页浅色模式）。
+    ui: True=WebUI 页面模式（oil_1001 F10）——窄画布减小 CSS 缩放、更大字号、
+    正文灰刻度 + 微加粗，使视觉字号与页面正文对齐；False（默认）保持 QQ 推送
+    原版式（月度推送视觉零回归）。
     """
-    W, H = 1040, 620
+    if ui:
+        W, H = 760, 600
+        f_title, f_sub, f_tick, f_legend = (
+            _font(30 * SCALE),
+            _font(24 * SCALE),
+            _font(24 * SCALE),
+            _font(24 * SCALE),
+        )
+        c_tick = _UI_TICK_LIGHT if theme == "light" else _UI_TICK_DARK
+        stroke = SCALE  # 同色描边模拟加粗，消除「又细又浅」的观感
+    else:
+        W, H = 1040, 620
+        f_title, f_sub, f_tick, f_legend = (
+            _font(38 * SCALE),
+            _font(22 * SCALE),
+            _font(20 * SCALE),
+            _font(22 * SCALE),
+        )
+        c_tick = None
+        stroke = 0
     ML, MR, MT, MB = 100, 40, 150, 90
     legend_per_row = 3
     legend_rows = math.ceil(len(lines) / legend_per_row) if lines else 0
@@ -1669,15 +1696,11 @@ def line_chart_image(
     c_main = C_L_MAIN if light else C_MAIN
     c_sub = C_L_SUB if light else C_SUB
     palette = PALETTE_LIGHT if light else PALETTE
+    if c_tick is None:
+        c_tick = c_sub
 
     img = Image.new("RGB", (W * SCALE, H * SCALE), c_bg)
     d = ImageDraw.Draw(img)
-    f_title, f_sub, f_tick, f_legend = (
-        _font(38 * SCALE),
-        _font(22 * SCALE),
-        _font(20 * SCALE),
-        _font(22 * SCALE),
-    )
 
     def sw(v):
         return int(v * SCALE)
@@ -1726,7 +1749,9 @@ def line_chart_image(
             (px0 - sw(14) - d.textlength(label, font=f_tick), yy - sw(12)),
             label,
             font=f_tick,
-            fill=c_sub,
+            fill=c_tick,
+            stroke_width=stroke,
+            stroke_fill=c_tick,
         )
 
     # X 轴：全局日期轴（缺失日期不画点，按日期对齐）
@@ -1740,7 +1765,9 @@ def line_chart_image(
                 (xx - d.textlength(dt[5:], font=f_tick) / 2, py1 + sw(12)),
                 dt[5:],
                 font=f_tick,
-                fill=c_sub,
+                fill=c_tick,
+                stroke_width=stroke,
+                stroke_fill=c_tick,
             )
         d.line((px0, py1, px1, py1), fill=c_line, width=SCALE)
 
@@ -1767,7 +1794,14 @@ def line_chart_image(
         lx = sw(ML) + col_i * sw((W - ML - MR) / legend_per_row)
         yy = ly + row * sw(48)
         d.rectangle((lx, yy, lx + sw(26), yy + sw(12)), fill=color)
-        d.text((lx + sw(36), yy - sw(8)), line["label"], font=f_legend, fill=c_main)
+        d.text(
+            (lx + sw(36), yy - sw(8)),
+            line["label"],
+            font=f_legend,
+            fill=c_main,
+            stroke_width=stroke,
+            stroke_fill=c_main,
+        )
 
     return img.resize((W, H), Image.LANCZOS)
 
