@@ -209,13 +209,13 @@
 
     <div class="field">
       <div class="label">🔁 推送频率</div>
-      <div class="hint">每日 = 每天到点推送；每周 = 仅在每周推送日推送；有变动时 = 每天到点对比油价，有变动才推送（首次运行仅记录基线）</div>
+      <div class="hint">每日 = 每天到点推送；每周 = 仅在每周推送日推送；关闭 = 不发常规推送，调价提醒与月度图不受影响（旧配置「有变动时」已并入调价提醒）</div>
       <div class="inline">
         <div>
           <select id="push_frequency">
             <option value="daily">每日推送</option>
             <option value="weekly">每周推送</option>
-            <option value="on_change">有变动时推送</option>
+            <option value="off">关闭（仅调价提醒）</option>
           </select>
         </div>
         <div id="push_weekday_wrap">
@@ -225,14 +225,24 @@
     </div>
 
     <div class="field">
-      <div class="label">🔔 调价提前提醒</div>
-      <div class="hint">「每周 / 有变动时」模式下，距下次调价窗口还剩 N 天时到点额外发一条文字提醒；0 = 不提醒</div>
+      <div class="label">🔔 调价提醒</div>
+      <div class="hint">任意推送频率下生效：距下次调价窗口剩余 ≤ N 天时每日一条提醒（AI 图片，失败回退文字）+ 调价落地后推送最新油价；0 = 关闭</div>
       <select id="change_remind_days">
-        <option value="0">不提醒</option>
-        <option value="1">提前 1 天</option>
-        <option value="2">提前 2 天</option>
-        <option value="3">提前 3 天</option>
+        <option value="0">关闭</option>
+        <option value="1">剩余 ≤ 1 天</option>
+        <option value="2">剩余 ≤ 2 天</option>
+        <option value="3">剩余 ≤ 3 天</option>
       </select>
+    </div>
+
+    <div class="field">
+      <div class="label">🧭 推送省份自适应</div>
+      <div class="hint">开启后推送与缺省查询按会话内最近查询的省份自动选择（私聊按本人、群聊按成员聚合，取最近 3 个），不足时回退已配置省份</div>
+      <label class="switch">
+        <input type="checkbox" id="auto_provinces">
+        <span class="track"></span>
+        <span>按近期查询偏好选省</span>
+      </label>
     </div>
 
     <div class="field">
@@ -574,6 +584,7 @@
     fillWeekdaySelect(cfg.push_weekday || 0);
     $("change_remind_days").value = String(cfg.change_remind_days == null
       ? 1 : cfg.change_remind_days);
+    $("auto_provinces").checked = cfg.auto_provinces === true;
     $("gen_enable").checked = cfg.gen_enable !== false;
     $("gen_model").value = cfg.gen_model || "";
     syncFrequencyUI();
@@ -604,6 +615,7 @@
       push_frequency: $("push_frequency").value,
       push_weekday: parseInt($("push_weekday").value, 10),
       change_remind_days: parseInt($("change_remind_days").value, 10),
+      auto_provinces: $("auto_provinces").checked,
       monthly_push: $("monthly_push").checked,
       gen_enable: $("gen_enable").checked,
       gen_model: $("gen_model").value.trim(),
