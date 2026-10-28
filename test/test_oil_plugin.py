@@ -670,6 +670,32 @@ class TestReporting(unittest.TestCase):
         self.assertIn("【上海】", text)
         self.assertNotIn("98#", text)
 
+    def test_oil1003_remind_text_price_details(self):
+        """调价提醒全文：单省=倒计时+无前缀价格行；多省=价格行带省份前缀；
+        无窗口省份整行跳过；全无倒计时返回空串。"""
+        rows = [("江苏", fake_price_data(8.09))]
+        text = reporting.build_remind_text(rows, fuels=["92", "95"])
+        self.assertIn("调价提醒", text)
+        self.assertIn("距下次调价窗口", text)
+        self.assertIn("92号汽油：8.09 元/升", text)
+        self.assertIn("95号汽油", text)
+        self.assertNotIn("98号", text)  # fuels 过滤
+        self.assertNotIn("江苏 92号", text)  # 单省不加前缀
+
+        multi = reporting.build_remind_text(
+            [("江苏", fake_price_data(8.09)), ("上海", fake_price_data(8.05))],
+            fuels=["92"],
+        )
+        self.assertIn("江苏 92号汽油：", multi)
+        self.assertIn("上海 92号汽油：", multi)
+        self.assertGreaterEqual(multi.count("距下次调价窗口"), 2)
+
+        no_window = fake_price_data(8.09)
+        no_window["next_change_time"] = ""
+        self.assertEqual(
+            reporting.build_remind_text([("江苏", no_window)], fuels=["92"]), ""
+        )
+
 
 # ======================= 渲染（TC-F01~F09） =======================
 
@@ -1277,6 +1303,51 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.plugin._cleanup_tmp()
         for name, kept in expect_kept.items():
             self.assertEqual(os.path.isfile(os.path.join(tmp, name)), kept, name)
+
+    # ---------- oil_1003：调价提醒带油价明细 ----------
+
+    async def test_oil1003_remind_single_text_includes_prices(self):
+        """单省调价提醒的文字消息：倒计时 + 当前油价明细。"""
+        self.cfg["basic"]["change_remind_days"] = 1
+        with mock.patch.object(
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+        ):
+            rows = await self.plugin._collect_today(["江苏"])
+            await self.plugin._advance_remind(rows)
+        plains = [
+            p.text
+            for _, mc in self.ctx.sent_messages
+            for p in mc.chain
+            if type(p).__name__.endswith("Plain")
+        ]
+        text = "\n".join(plains)
+        self.assertIn("调价提醒", text)
+        self.assertIn("调价窗口", text)
+        self.assertIn("92号汽油：8.09 元/升", text)
+
+    async def test_oil1003_remind_multi_prompt_includes_prices(self):
+        """多省调价提醒（仅图片）：海报提示词含带省份前缀的价格行。"""
+        self.cfg["basic"]["change_remind_days"] = 1
+        prompts = []
+
+        def fake(prompt, endpoints, model=None, size=None, out_dir=None, name="g.png"):
+            prompts.append(prompt)
+            return _fake_genimage_generate(prompt, endpoints, model, size, out_dir, name)
+
+        with (
+            mock.patch.object(
+                plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+            ),
+            mock.patch.object(plugin_main.genimage, "generate", fake),
+        ):
+            rows = await self.plugin._collect_today(["江苏", "上海"])
+            await self.plugin._advance_remind(rows)
+        self.assertEqual(len(prompts), 1)
+        self.assertIn("调价提醒", prompts[0])
+        self.assertIn("江苏 92号汽油：", prompts[0])
+        self.assertIn("上海 92号汽油：", prompts[0])
+        # 文字消息与海报同源：多省预告只发图，原文进「播报原文（核对用）」段
+        self.assertIn("【播报原文（核对用）】", prompts[0])
 
     async def test_a07_look_hit(self):
         ev = MockEvent()

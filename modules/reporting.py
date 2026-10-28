@@ -94,6 +94,33 @@ def drop_hint_text(next_time: str) -> str:
     return "本轮降幅已生效，今天起加油更省钱！"
 
 
+def build_remind_text(rows: list, fuels: list = None) -> str:
+    """调价提醒全文（oil_1003）：每省倒计时 + 当前油价明细。
+
+    行结构同时服务两个消费者：QQ 文字消息直接阅读；AI 海报提示词按行
+    分类（含「元/升」进数据面板、含「调价窗口」进倒计时区）。多省时
+    价格行带省份前缀，海报上不致混淆归属。
+    rows: [(prov, data), ...]；无任何倒计时行时返回空串（调用方不发）。
+    """
+    show = [f for f in (fuels or FUEL_ORDER)]
+    lines = ["🚨🚨 调价提醒 🚨🚨"]
+    multi = len(rows) > 1
+    for prov, data in rows:
+        line = adjust_countdown_text(data.get("next_change_time") or "")
+        if not line:
+            continue
+        lines.append(f"⛽ {prov}：{line}")
+        for fuel in FUEL_ORDER:
+            if fuel not in show:
+                continue
+            entry = (data.get("fuels") or {}).get(fuel)
+            if not entry:
+                continue
+            prefix = f"{prov} " if multi else ""
+            lines.append(f"{prefix}{fuel_line(fuel, entry)}")
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 def build_text_report(
     prov: str, data: dict, trend_series=None, trend_days: int = 14, fuels: list = None
 ) -> str:

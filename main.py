@@ -313,8 +313,9 @@ class OilPricePlugin(Star):
 
     async def _advance_remind(self, rows: list, targets: list = None):
         """调价预告（相位①②，F6）：任一省距窗口剩余 ≤ N 天时发一条提醒，
-        每日每省份集至多一条。gen_enable 开且端点可用走 AI 海报（单省=文字+图片、
-        多省=仅图片、多省倒计时逐行入图），失败回退纯文字。"""
+        每日每省份集至多一条。文案含每省倒计时与当前油价明细（oil_1003）。
+        gen_enable 开且端点可用走 AI 海报（单省=文字+图片、多省=仅图片、
+        多省倒计时逐行入图），失败回退纯文字。"""
         days_n = self.prefs.change_remind_days()
         if days_n <= 0:
             return
@@ -323,19 +324,18 @@ class OilPricePlugin(Star):
         st = self._load_push_state()
         if (st.get("remind_done") or {}).get(set_key) == today:
             return
-        min_days, lines = None, []
+        remind_rows, min_days = [], None
         for prov, data in rows:
-            nxt = data.get("next_change_time") or ""
-            days, _ = reporting.days_until(nxt)
+            days, _ = reporting.days_until(data.get("next_change_time") or "")
             if days is None:
                 continue
             min_days = days if min_days is None else min(min_days, days)
-            line = reporting.adjust_countdown_text(nxt)
-            if line:
-                lines.append(f"⛽ {prov}：{line}")
-        if min_days is None or min_days > days_n or not lines:
+            remind_rows.append((prov, data))
+        if min_days is None or min_days > days_n or not remind_rows:
             return
-        text = "🚨🚨 调价提醒 🚨🚨\n" + "\n".join(lines)
+        text = reporting.build_remind_text(remind_rows, self.prefs.default_fuels())
+        if not text:
+            return
         try:
             if not self._image_ready():
                 await self._push_text(text, targets)
