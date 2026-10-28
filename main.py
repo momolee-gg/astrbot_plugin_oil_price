@@ -34,7 +34,7 @@ from .modules.constants import FUEL_NAMES, FUEL_ORDER, PROVINCES
 from .modules.storage import Store, pick_preferred_provinces
 
 PLUGIN_NAME = "astrbot_plugin_oil_price"
-PLUGIN_VERSION = "1.1.0"
+PLUGIN_VERSION = "1.1.1"
 DATA_DIR = os.path.join(get_astrbot_data_path(), "plugin_data", PLUGIN_NAME)
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 QUOTA_FILE = os.path.join(DATA_DIR, "user_quota.json")
@@ -372,7 +372,8 @@ class OilPricePlugin(Star):
         except Exception as e:
             logger.error(f"[油价插件] 出图失败，改用文字推送: {e}")
             await self._push_text(
-                reporting.build_multi_text(rows, self.prefs.default_fuels()), targets
+                self._fallback_text(rows) + "\n\n⚠️ 海报生成失败，已回退文字版",
+                targets,
             )
 
     async def _daily_push(self):
@@ -442,6 +443,17 @@ class OilPricePlugin(Star):
             trend_series=self.store.trend_series,
             fuels=self.prefs.default_fuels(),
         )
+
+    def _fallback_text(self, rows: list) -> str:
+        """只发文字时的文案：单省=完整多行报告，多省=紧凑速览。
+
+        出图失败与图片关闭两条路径共用；此前单省出图失败误用多省速览，
+        各油号挤成一行（oil_1001 修复）。
+        """
+        if len(rows) == 1:
+            prov, data = rows[0]
+            return self._report_text(prov, data)
+        return reporting.build_multi_text(rows, self.prefs.default_fuels())
 
     def _gen_endpoints(self) -> list:
         """从 bot 已配置的模型提供者提取生图端点，正在使用的排最前。"""
@@ -666,13 +678,7 @@ class OilPricePlugin(Star):
                 "（图片消息未开启或未配置生图端点，已发文字版。"
                 "请到 WebUI「油价设置」开启图片消息并确认 bot 已配置模型）"
             )
-            if len(provs) == 1 and rows:
-                prov, data = rows[0]
-                yield event.plain_result(self._report_text(prov, data) + hint)
-            else:
-                yield event.plain_result(
-                    reporting.build_multi_text(rows, self.prefs.default_fuels()) + hint
-                )
+            yield event.plain_result(self._fallback_text(rows) + hint)
             return
         yield event.plain_result(
             f"⏳ 收到喵，正在查询{'、'.join(provs)}油价并生成海报（约需几十秒），请稍等～"
@@ -695,7 +701,7 @@ class OilPricePlugin(Star):
         except Exception as e:
             logger.error(f"[油价插件] 出图失败: {e}")
             yield event.plain_result(
-                reporting.build_multi_text(rows, self.prefs.default_fuels())
+                self._fallback_text(rows) + "\n\n⚠️ 海报生成失败，已回退文字版"
             )
 
     @filter.command("看看油价")

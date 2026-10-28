@@ -1,4 +1,4 @@
-"""油价插件自动化测试（astrbot_plugin_oil_price v1.1.0）。
+"""油价插件自动化测试（astrbot_plugin_oil_price v1.1.1）。
 
 运行方式（容器内）：
     cd /AstrBot/data/plugins && python3 -m unittest astrbot_plugin_oil_price.tests.test_oil_plugin -v
@@ -842,14 +842,39 @@ class TestGenImage(unittest.TestCase):
         self.assertEqual(
             eps,
             [
-                ("k1", "https://open.bigmodel.cn/api/paas/v4/images/generations"),
-                ("k2", "https://open.bigmodel.cn/api/paas/v4/images/generations"),
+                ("k1", "https://open.bigmodel.cn/api/paas/v4/images/generations", ""),
+                ("k2", "https://open.bigmodel.cn/api/paas/v4/images/generations", ""),
             ],
         )
         eps2 = genimage.endpoints_from_provider_config(
-            {"key": "solo", "api_base": "https://api.deepseek.com/v1"}
+            {
+                "key": "solo",
+                "api_base": "https://api.deepseek.com/v1",
+                "model": "gpt-image-2.5",
+            }
         )
-        self.assertEqual(eps2, [("solo", "https://api.deepseek.com/v1/images/generations")])
+        self.assertEqual(
+            eps2,
+            [("solo", "https://api.deepseek.com/v1/images/generations", "gpt-image-2.5")],
+        )
+        eps3 = genimage.endpoints_from_provider_config(
+            {
+                "key": "k",
+                "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                "model": "qwen-image-3.0",
+            }
+        )
+        self.assertEqual(
+            eps3,
+            [
+                (
+                    "k",
+                    "https://dashscope.aliyuncs.com/api/v1/services/aigc/"
+                    "multimodal-generation/generation",
+                    "qwen-image-3.0",
+                )
+            ],
+        )
         self.assertEqual(genimage.endpoints_from_provider_config({"key": ["k"]}), [])
         self.assertEqual(genimage.endpoints_from_provider_config(None), [])
 
@@ -858,6 +883,48 @@ class TestGenImage(unittest.TestCase):
 
         with self.assertRaises(genimage.GenImageError):
             genimage.generate("p", [])
+
+    def test_generate_per_endpoint_model_and_failover(self):
+        """端点自带模型名优先于全局 gen_model；上一端点失败继续尝试下一端点。
+
+        对应线上事故：全局模型名 gpt-image-2.5 被发给百炼端点导致
+        Model not exist，可用的百炼兜底被废掉（oil_1001 修复）。
+        """
+        import tempfile
+
+        from astrbot_plugin_oil_price.modules import genimage
+
+        calls = []
+
+        def fake_once(prompt, api_key, url, model, size):
+            calls.append((url, model))
+            if len(calls) == 1:
+                raise RuntimeError("HTTP Error 403")
+            return "b64", base64.b64encode(b"\x89PNG" + b"0" * 2000).decode()
+
+        with (
+            tempfile.TemporaryDirectory() as td,
+            mock.patch.object(genimage, "_gen_once", fake_once),
+        ):
+            path = genimage.generate(
+                "p",
+                [
+                    ("k1", "https://x.example/v1/images/generations", "gpt-image-2.5"),
+                    ("k2", "https://dashscope.aliyuncs.com/api/v1/x", ""),
+                ],
+                model="qwen-image-3.0",
+                out_dir=td,
+                name="t.png",
+            )
+            size = os.path.getsize(path)
+        self.assertEqual(
+            calls,
+            [
+                ("https://x.example/v1/images/generations", "gpt-image-2.5"),
+                ("https://dashscope.aliyuncs.com/api/v1/x", "qwen-image-3.0"),
+            ],
+        )
+        self.assertGreater(size, 1024)
 
     def test_styles_and_random_no_repeat(self):
         from astrbot_plugin_oil_price.modules import genimage
@@ -1031,12 +1098,44 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(seen, ["广东"])
 
     async def test_a06_today_render_fail_text_fallback(self):
+        """单省出图失败：回退完整多行报告（不再是速览挤一行）+ 失败提示。"""
         ev = MockEvent()
         with mock.patch.object(
             plugin_main.genimage, "generate", side_effect=RuntimeError("生图平台不可用")
         ):
             out = await run_cmd(self.plugin.today_cmd(ev, "广东"))
-        self.assertIn("今日油价速览", out[-1]["text"])
+        text = out[-1]["text"]
+        self.assertIn("广东油价", text)
+        self.assertIn("92号", text)
+        self.assertIn("\n", text)  # 完整报告按油号分行
+        self.assertNotIn("今日油价速览", text)
+        self.assertIn("海报生成失败", text)
+
+    async def test_a06b_today_render_fail_multi_keeps_summary(self):
+        """多省出图失败：仍用紧凑速览 + 失败提示。"""
+        ev = MockEvent()
+        with mock.patch.object(
+            plugin_main.genimage, "generate", side_effect=RuntimeError("生图平台不可用")
+        ):
+            out = await run_cmd(self.plugin.today_cmd(ev, ""))
+        text = out[-1]["text"]
+        self.assertIn("今日油价速览", text)
+        self.assertIn("【江苏】", text)
+        self.assertIn("海报生成失败", text)
+
+    async def test_a06c_push_report_fail_single_prov_full_text(self):
+        """单省推送出图失败：回退完整报告而非速览（oil_1001 修复）。"""
+        with mock.patch.object(
+            plugin_main.genimage, "generate", side_effect=RuntimeError("403")
+        ):
+            await self.plugin._push_report(
+                [("江苏", fake_price_data(8.09))], ["default:GroupMessage:10001"]
+            )
+        parts = self.ctx.sent_messages[0][1].chain
+        text = parts[0].text
+        self.assertIn("江苏油价", text)
+        self.assertNotIn("今日油价速览", text)
+        self.assertIn("海报生成失败", text)
 
     async def test_a07_look_hit(self):
         ev = MockEvent()

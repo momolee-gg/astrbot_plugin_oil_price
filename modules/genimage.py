@@ -206,15 +206,19 @@ def prompt_from_text(text: str, style: str = "") -> str:
 
 
 def endpoints_from_provider_config(cfg: dict) -> list:
-    """从 provider 配置提取 (api_key, 生图端点) 列表。
+    """从 provider 配置提取 (api_key, 生图端点, 模型名) 列表。
 
-    cfg 即 AstrBot provider 的 provider_config（含 key 列表与 api_base）。
+    cfg 即 AstrBot provider 的 provider_config（含 key 列表、api_base 与该
+    provider 实例配置的 model）。模型名逐端点携带：各平台的 provider 各配
+    各自的生图模型（如百炼 qwen-image-3.0、中转站 gpt-image-2.5），
+    调用时优先用端点自带的模型名，避免把 A 平台的模型名发给 B 平台。
     百炼（dashscope）映射到原生多模态生图接口，其余按 OpenAI 兼容协议拼
     images/generations。
     """
     keys = (cfg or {}).get("key") or []
     if isinstance(keys, str):
         keys = [keys]
+    model = str((cfg or {}).get("model") or "").strip()
     base = str((cfg or {}).get("api_base") or "").strip().rstrip("/")
     if not base:
         return []
@@ -227,7 +231,7 @@ def endpoints_from_provider_config(cfg: dict) -> list:
     for k in keys:
         k = str(k or "").strip()
         if k:
-            out.append((k, url))
+            out.append((k, url, model))
     return out
 
 
@@ -285,16 +289,20 @@ def generate(
 ) -> str:
     """逐个尝试端点调生图并下载，返回本地 PNG 路径；失败抛 GenImageError。
 
-    endpoints: [(api_key, url), ...]，顺序即优先级（正在使用的 provider 在前）。
+    endpoints: [(api_key, url, model), ...]，顺序即优先级（正在使用的 provider
+    在前）。每个端点优先用自带模型名（该 provider 在 bot 里配置的模型），
+    未配置的回退到 model 参数——避免把 A 平台的模型名发给 B 平台。
     """
     if not endpoints:
         raise GenImageError("未从 bot 配置的模型提供者取到生图端点")
     last_err = None
-    for api_key, url in endpoints:
+    for ep in endpoints:
+        api_key, url = ep[0], ep[1]
+        ep_model = (ep[2] if len(ep) > 2 else "") or model or DEFAULT_MODEL
         try:
-            kind, img = _gen_once(prompt, api_key, url, model or DEFAULT_MODEL, size)
+            kind, img = _gen_once(prompt, api_key, url, ep_model, size)
         except Exception as e:
-            last_err = GenImageError(f"生图请求失败[{url}]: {e}")
+            last_err = GenImageError(f"生图请求失败[{url} {ep_model}]: {e}")
             continue
         try:
             os.makedirs(out_dir, exist_ok=True)

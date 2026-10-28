@@ -157,10 +157,10 @@
         "hint": "生图已改用 bot 在 AstrBot 中配置的模型提供者（密钥与 api_base 自动继承），无需单独填写"
       },
       "gen_model": {
-        "description": "🎨 生图模型",
+        "description": "🎨 生图模型（兜底值）",
         "type": "string",
         "default": "qwen-image-3.0",
-        "hint": "生图模型名：阿里云百炼 qwen-image-3.0（中文文字最准） / 智谱 glm-image；端点自动匹配 bot 里配置的 provider 平台"
+        "hint": "各生图端点优先使用该 provider 在 bot 里配置的模型名（如百炼 qwen-image-3.0、中转站 gpt-image-2.5），未配置模型的端点才用这里的兜底值"
       },
       "gen_enable": {
         "description": "🖼️ 图片消息开关",
