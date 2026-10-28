@@ -63,6 +63,11 @@ DEFAULT_FUELS = ["92"]
 # ---- 渲染 ----
 FONT_PATH = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
+# ---- 临时图片清理（oil_1002）：按 mtime TTL，超期即删 ----
+TMP_KEEP_DAYS = 3  # AI 海报 / 单油卡 / 结算单 / 走势图等当日产物
+TMP_KEEP_MONTHLY_DAYS = 60  # 月度走势图（每月 1 日重生成，留两个月余量）
+CACHE_MIN_BYTES = 1024  # 缓存命中校验：PNG 小于该值视为坏图（与写盘校验一致）
+
 C_BG = (24, 26, 38)
 C_PANEL = (33, 37, 54)
 C_LINE = (48, 52, 74)

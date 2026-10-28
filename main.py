@@ -16,8 +16,10 @@
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
+import time
 from datetime import datetime
 
 from astrbot.api import logger
@@ -30,7 +32,14 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .config import Prefs
 from .modules import charts, datasource, genimage, reporting
-from .modules.constants import FUEL_NAMES, FUEL_ORDER, PROVINCES
+from .modules.constants import (
+    CACHE_MIN_BYTES,
+    FUEL_NAMES,
+    FUEL_ORDER,
+    PROVINCES,
+    TMP_KEEP_DAYS,
+    TMP_KEEP_MONTHLY_DAYS,
+)
 from .modules.storage import Store, pick_preferred_provinces
 
 PLUGIN_NAME = "astrbot_plugin_oil_price"
@@ -65,10 +74,12 @@ class OilPricePlugin(Star):
         self.store = Store(HISTORY_FILE, QUOTA_FILE, EVENTS_FILE)
         os.makedirs(DATA_DIR, exist_ok=True)
         os.makedirs(TMP_DIR, exist_ok=True)
+        self._cleanup_tmp()
         self._tasks = []
         self._pushed_date = None
         self._pushed_month = None
         self._loop_started = False
+        self._cleaned_date = None
         self._state_file = os.path.join(DATA_DIR, "push_state.json")
 
         context.register_web_api(
@@ -124,6 +135,9 @@ class OilPricePlugin(Star):
                 hour, minute = self.prefs.push_time()
                 today = now.strftime("%Y-%m-%d")
                 month = now.strftime("%Y-%m")
+                if self._cleaned_date != today:
+                    self._cleaned_date = today
+                    self._cleanup_tmp()
                 if now.hour == hour and now.minute == minute:
                     if self._pushed_date != today:
                         self._pushed_date = today
@@ -188,6 +202,12 @@ class OilPricePlugin(Star):
     def _set_key(self, provs: list) -> str:
         return "、".join(provs)
 
+    @staticmethod
+    def _norm_provs(provs: list) -> list:
+        """省份列表按省份表固定顺序归一（oil_1002）：多省文案行序、推送分组
+        与用户输入顺序解耦——同省集不同顺序共享同一文案与缓存图。"""
+        return sorted(provs, key=PROVINCES.index)
+
     def _target_province_sets(self, targets: list) -> dict:
         """目标 → 省份集分组 {tuple(provs): [umo...]}；auto_provinces 开启时各目标可不同，
         相同省份集共享一次文案与生图（F9）。"""
@@ -201,9 +221,11 @@ class OilPricePlugin(Star):
         """目标缺省省份（F8）：auto_provinces 开启时按该目标近期查询偏好选取
         （群聊按成员去重聚合、私聊按本人），记录不足回退配置省份。"""
         if not self.prefs.auto_provinces():
-            return self.prefs.provinces()
+            return self._norm_provs(self.prefs.provinces())
         picked = pick_preferred_provinces(self.store.query_events(umo))
-        return picked if picked else self.prefs.provinces()
+        return (
+            self._norm_provs(picked) if picked else self._norm_provs(self.prefs.provinces())
+        )
 
     def _record_query(self, event: AstrMessageEvent, provs: list):
         """记录一次成功的主动查询事件（F7），供省份自适应聚合；推送拉取不计入。"""
@@ -318,16 +340,20 @@ class OilPricePlugin(Star):
             if not self._image_ready():
                 await self._push_text(text, targets)
             elif len(rows) == 1:
-                path = await self._gen_image_from_text(
+                path = await self.get_or_gen_image(
                     text,
-                    f"ai_remind_{rows[0][0]}_{today}.png",
-                    style=self._pick_style(),
+                    f"ai_remind_{rows[0][0]}",
+                    today,
+                    provs=[rows[0][0]],
                 )
                 await self._push_text(text, targets)
                 await self._push_image(path, targets)
             else:
-                path = await self._gen_image_from_text(
-                    text, f"ai_remind_multi_{today}.png", style=self._pick_style()
+                path = await self.get_or_gen_image(
+                    text,
+                    "ai_remind_multi",
+                    today,
+                    provs=[p for p, _ in rows],
                 )
                 await self._push_image(path, targets)
         except Exception as e:
@@ -353,8 +379,8 @@ class OilPricePlugin(Star):
                 prov, data = rows[0]
                 text = self._report_text(prov, data)
                 if send_image:
-                    path = await self._gen_image_from_text(
-                        text, f"ai_{prov}_{today}.png", style=self._pick_style()
+                    path = await self.get_or_gen_image(
+                        text, f"ai_{prov}", today, provs=[prov]
                     )
                     await self._push_text(text, targets)
                     await self._push_image(path, targets)
@@ -363,8 +389,8 @@ class OilPricePlugin(Star):
             else:
                 text = reporting.build_multi_text(rows, self.prefs.default_fuels())
                 if send_image:
-                    path = await self._gen_image_from_text(
-                        text, f"ai_multi_{today}.png", style=self._pick_style()
+                    path = await self.get_or_gen_image(
+                        text, "ai_multi", today, provs=[p for p, _ in rows]
                     )
                     await self._push_image(path, targets)
                 else:
@@ -489,7 +515,7 @@ class OilPricePlugin(Star):
         after = raw.split("今日油价", 1)[1] if "今日油价" in raw else ""
         tokens = [t for t in after.split() if t in PROVINCES]
         if tokens:
-            return list(dict.fromkeys(tokens))
+            return self._norm_provs(list(dict.fromkeys(tokens)))
         prov_arg = (province or "").strip()
         if prov_arg in PROVINCES:
             return [prov_arg]
@@ -497,19 +523,73 @@ class OilPricePlugin(Star):
             str(getattr(event, "unified_msg_origin", "") or "")
         )
 
-    async def _gen_image_from_text(self, text: str, name: str, style: str = "") -> str:
-        """把当天文字消息发给 bot 已配置模型平台的生图模型，返回本地 PNG 路径。"""
+    # ================= 生图（当日内容寻址缓存，oil_1002） =================
+
+    @staticmethod
+    def _text_hash(text: str) -> str:
+        return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+    def _cache_lookup(self, text: str, base_name: str, date: str) -> str:
+        """当日生图缓存查找：文本 sha1 即缓存键，命中返回图片路径否则空串。
+
+        命中条件 = PNG 存在且 ≥CACHE_MIN_BYTES，且 meta 记录的文本哈希一致——
+        配置/数据/文案变化都会体现在文本里，哈希不一致自动失效，不会发陈旧图。
+        """
+        h = self._text_hash(text)
+        path = os.path.join(TMP_DIR, f"{base_name}_{date}_{h[:8]}.png")
+        if not (os.path.isfile(path) and os.path.getsize(path) >= CACHE_MIN_BYTES):
+            return ""
+        try:
+            with open(path + ".meta.json", encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            return ""
+        return path if meta.get("text_sha1") == h else ""
+
+    def _cache_store(self, path: str, text: str, style: str, provs: list):
+        """生图成功后写 sidecar 元数据（与 PNG 同寿，清理时一并删除）。"""
+        meta = {
+            "text_sha1": self._text_hash(text),
+            "base_name": os.path.splitext(os.path.basename(path))[0],
+            "provs": list(provs),
+            "style": style,
+            "created": datetime.now().isoformat(timespec="seconds"),
+        }
+        try:
+            with open(path + ".meta.json", "w", encoding="utf-8") as f:
+                f.write(json.dumps(meta, ensure_ascii=False))
+        except Exception as e:
+            logger.warning(f"[油价插件] 缓存元数据写入失败（不影响本次发图）: {e}")
+
+    async def get_or_gen_image(
+        self, text: str, base_name: str, date: str, provs: list = None
+    ) -> str:
+        """海报统一入口：当日缓存命中直接复用（秒回、零成本），未命中才真实生图。
+
+        base_name 如 ai_江苏 / ai_multi / ai_remind_江苏 / ai_remind_multi，
+        最终文件名 `{base}_{date}_{hash8}.png`——内容寻址使不同省集/文案天然
+        各自成键，互不覆盖。
+        """
         if not self.prefs.gen_enable():
             raise genimage.GenImageError("图片消息已关闭（gen_enable=false）")
+        if self.prefs.gen_cache():
+            cached = self._cache_lookup(text, base_name, date)
+            if cached:
+                logger.info(f"[油价插件] 生图缓存命中: {os.path.basename(cached)}")
+                return cached
+        style = self._pick_style()
         prompt = genimage.prompt_from_text(text, style=style)
-        return await asyncio.to_thread(
+        path = await asyncio.to_thread(
             genimage.generate,
             prompt,
             self._gen_endpoints(),
             self.prefs.gen_model(),
             out_dir=TMP_DIR,
-            name=name,
+            name=f"{base_name}_{date}_{self._text_hash(text)[:8]}.png",
         )
+        if self.prefs.gen_cache():
+            self._cache_store(path, text, style, provs or [])
+        return path
 
     # ================= 推送通道 =================
 
@@ -536,6 +616,35 @@ class OilPricePlugin(Star):
 
     async def _push_text(self, text: str, targets: list = None):
         await self._deliver([Plain(text)], targets)
+
+    def _cleanup_tmp(self):
+        """临时图片按 mtime TTL 清理（oil_1002）：AI 海报与各类当日产物 3 天、
+        月度走势图 60 天；不解析文件名，元数据丢失的孤儿文件也能清走。"""
+        now = time.time()
+        removed = 0
+        try:
+            names = os.listdir(TMP_DIR)
+        except OSError:
+            return
+        for name in names:
+            path = os.path.join(TMP_DIR, name)
+            try:
+                age = now - os.path.getmtime(path)
+            except OSError:
+                continue
+            keep = (
+                TMP_KEEP_MONTHLY_DAYS * 86400
+                if name.startswith("monthly_")
+                else TMP_KEEP_DAYS * 86400
+            )
+            if age > keep:
+                try:
+                    os.remove(path)
+                    removed += 1
+                except OSError:
+                    pass
+        if removed:
+            logger.info(f"[油价插件] 已清理过期临时图片 {removed} 个")
 
     # ================= WebUI：设置页 API =================
 
@@ -680,23 +789,27 @@ class OilPricePlugin(Star):
             )
             yield event.plain_result(self._fallback_text(rows) + hint)
             return
+        if len(provs) == 1 and rows:
+            prov, data = rows[0]
+            poster_text = self._report_text(prov, data)
+            base_name, poster_provs = f"ai_{prov}", [prov]
+        else:
+            poster_text = reporting.build_multi_text(rows, self.prefs.default_fuels())
+            base_name, poster_provs = "ai_multi", [p for p, _ in rows]
+        # 当日缓存命中（oil_1002）：跳过等待提示语直接发图
+        if self.prefs.gen_cache():
+            cached = self._cache_lookup(poster_text, base_name, today)
+            if cached:
+                logger.info(f"[油价插件] 生图缓存命中: {os.path.basename(cached)}")
+                yield event.chain_result([BotImage.fromFileSystem(cached)])
+                return
         yield event.plain_result(
             f"⏳ 收到喵，正在查询{'、'.join(provs)}油价并生成海报（约需几十秒），请稍等～"
         )
         try:
-            if len(provs) == 1 and rows:
-                prov, data = rows[0]
-                path = await self._gen_image_from_text(
-                    self._report_text(prov, data),
-                    f"ai_{prov}_{today}.png",
-                    style=self._pick_style(),
-                )
-            else:
-                path = await self._gen_image_from_text(
-                    reporting.build_multi_text(rows, self.prefs.default_fuels()),
-                    f"ai_multi_{today}.png",
-                    style=self._pick_style(),
-                )
+            path = await self.get_or_gen_image(
+                poster_text, base_name, today, provs=poster_provs
+            )
             yield event.chain_result([BotImage.fromFileSystem(path)])
         except Exception as e:
             logger.error(f"[油价插件] 出图失败: {e}")

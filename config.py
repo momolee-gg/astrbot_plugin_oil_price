@@ -52,6 +52,10 @@ class Prefs:
         """图片消息开关：开且生图端点可用才发图片，否则只发文字。"""
         return bool(self._get("api", "gen_enable", True))
 
+    def gen_cache(self) -> bool:
+        """当日生图缓存（oil_1002）：同文本海报当天只生成一次，重复请求直接复用。"""
+        return bool(self._get("api", "gen_cache", True))
+
     def push_frequency(self) -> str:
         """推送频率：daily=每日 / weekly=每周 / off=关闭常规推送（调价提醒独立生效）。
 
@@ -243,6 +247,7 @@ class Prefs:
             "auto_provinces": self.auto_provinces(),
             "monthly_push": self.monthly_push_enabled(),
             "gen_enable": self.gen_enable(),
+            "gen_cache": self.gen_cache(),
             "gen_model": self.gen_model(),
             "private_targets": priv,
             "group_targets": group,
@@ -324,6 +329,12 @@ class Prefs:
             bool(gen_enable)
             if isinstance(gen_enable, bool)
             else str(gen_enable).lower() in ("1", "true", "on")
+        )
+        gen_cache = payload.get("gen_cache", True)
+        gen_cache = (
+            bool(gen_cache)
+            if isinstance(gen_cache, bool)
+            else str(gen_cache).lower() in ("1", "true", "on")
         )
         gen_model = str(payload.get("gen_model", "") or "").strip()
 
@@ -414,6 +425,7 @@ class Prefs:
         api = self._section("api")
         api["app_key"] = app_key
         api["gen_enable"] = gen_enable
+        api["gen_cache"] = gen_cache
         api["gen_model"] = gen_model
         return []
 

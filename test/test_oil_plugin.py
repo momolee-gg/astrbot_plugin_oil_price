@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import sys
+import time
 import unittest
 from datetime import datetime, timedelta
 from unittest import mock
@@ -1013,6 +1014,30 @@ class TestGenImage(unittest.TestCase):
             "app_key": "k",
         }
 
+    def test_oil1002_norm_provs_canonical_order(self):
+        """多省行序按省份表归一：与输入顺序解耦（缓存共享的前提）。"""
+        norm = plugin_main.OilPricePlugin._norm_provs
+        self.assertEqual(norm(["上海", "广东", "江苏"]), ["广东", "江苏", "上海"])
+        self.assertEqual(norm(["江苏"]), ["江苏"])
+        self.assertEqual(norm(["广东", "江苏"]), norm(["江苏", "广东"]))
+
+    def test_oil1002_flat_notice_deterministic(self):
+        """持平日提示语按（日期, 省份）确定选取：当天内文本稳定可作缓存键。"""
+        flat = {
+            "fuels": {
+                "92": {"price": 8.0, "before": 8.0, "change": 0.0, "pct": 0.0},
+                "95": {"price": 8.6, "before": 8.6, "change": 0.0, "pct": 0.0},
+                "98": {"price": 9.9, "before": 9.9, "change": 0.0, "pct": 0.0},
+                "0": {"price": 7.7, "before": 7.7, "change": 0.0, "pct": 0.0},
+            },
+            "next_change_time": "",
+        }
+        t1 = reporting.build_text_report("江苏", flat)
+        t2 = reporting.build_text_report("江苏", flat)
+        self.assertEqual(t1, t2)
+        notice_line = [ln for ln in t1.splitlines() if "💡" in ln][0]
+        self.assertTrue(any(n in notice_line for n in reporting.FLAT_NOTICES))
+
 
 # ======================= 指令 + 推送 + WebAPI（异步） =======================
 
@@ -1136,6 +1161,122 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("江苏油价", text)
         self.assertNotIn("今日油价速览", text)
         self.assertIn("海报生成失败", text)
+
+    # ---------- oil_1002：当日生图缓存 ----------
+
+    def _counting_gen(self, calls: list):
+        """包一层计数假的生图实现，返回可 patch 的函数。"""
+
+        def fake(prompt, endpoints, model=None, size=None, out_dir=None, name="g.png"):
+            calls.append(name)
+            return _fake_genimage_generate(prompt, endpoints, model, size, out_dir, name)
+
+        return fake
+
+    async def test_oil1002_hit_skips_gen_and_wait(self):
+        """同日同省两次查询：只真实生图 1 次；第二次无等待语、直接发图。"""
+        calls = []
+        with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
+            out1 = await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+            out2 = await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual([r["type"] for r in out1], ["plain", "chain"])  # 首次有等待语
+        self.assertEqual([r["type"] for r in out2], ["chain"])  # 命中：无等待语直接发图
+        meta = calls[0] + ".meta.json"
+        self.assertTrue(os.path.isfile(os.path.join(plugin_main.TMP_DIR, meta)))
+
+    async def test_oil1002_push_and_query_share_cache(self):
+        """单省推送后查询（反之亦然）同文本命中：合计只生图 1 次。"""
+        calls = []
+        with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
+            await self.plugin._push_report(
+                [("江苏", fake_price_data(8.09))], ["default:GroupMessage:10001"]
+            )
+            await run_cmd(self.plugin.today_cmd(MockEvent(), "江苏"))
+        self.assertEqual(len(calls), 1)
+
+    async def test_oil1002_multi_order_normalized_shared(self):
+        """`广东 江苏` 与 `江苏 广东` 归一为同一文本：命中同一张缓存图。"""
+        calls = []
+        with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
+            out1 = await run_cmd(
+                self.plugin.today_cmd(MockEvent(message_str="今日油价 广东 江苏"), "")
+            )
+            out2 = await run_cmd(
+                self.plugin.today_cmd(MockEvent(message_str="今日油价 江苏 广东"), "")
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(out1[-1]["type"], "chain")
+        self.assertEqual([r["type"] for r in out2], ["chain"])
+        self.assertEqual(
+            os.path.basename(out1[-1]["parts"][0].path),
+            os.path.basename(out2[-1]["parts"][0].path),
+        )
+
+    async def test_oil1002_fuels_change_invalidates(self):
+        """改默认油号后文本变化：哈希不一致 → 重生成。"""
+        calls = []
+        with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
+            await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+            self.cfg["basic"]["default_fuels"] = ["92"]
+            await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+        self.assertEqual(len(calls), 2)
+
+    async def test_oil1002_cache_off_keeps_legacy(self):
+        """gen_cache 关闭：每次真实生图、保留等待语（行为同 v1.1.1）。"""
+        self.cfg["api"]["gen_cache"] = False
+        calls = []
+        with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
+            out1 = await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+            out2 = await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([r["type"] for r in out1], ["plain", "chain"])
+        self.assertEqual([r["type"] for r in out2], ["plain", "chain"])
+
+    async def test_oil1002_metaless_png_regenerates(self):
+        """只有 PNG 没有 meta 的历史文件：视为未命中，重生成并补写 meta。"""
+        calls = []
+        text = self.plugin._report_text("广东", fake_price_data(8.09))
+        h = self.plugin._text_hash(text)
+        path = os.path.join(
+            plugin_main.TMP_DIR,
+            f"ai_广东_{self.plugin.store.today()}_{h[:8]}.png",
+        )
+        with open(path, "wb") as f:
+            f.write(b"\x89PNG\r\n\x1a\n" + b"0" * 2048)
+        with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
+            await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(os.path.isfile(path + ".meta.json"))
+
+    async def test_oil1002_tmp_cleanup(self):
+        """mtime TTL 清理：AI 图/meta/单油卡 3 天、月度图 60 天，孤儿元数据一并清走。"""
+        tmp = plugin_main.TMP_DIR
+        now = time.time()
+        expect_kept = {
+            "ai_江苏_2026-10-20_ab12cd34.png": False,  # 5 天前 → 过期
+            "ai_江苏_2026-10-20_ab12cd34.png.meta.json": False,
+            "ai_江苏_today_99ff8811.png": True,  # 刚生成 → 保留
+            "receipt_50_2026-10-20.png": False,  # 4 天前 → 过期
+            "monthly_2026-08.png": False,  # 61 天前 → 过期
+            "monthly_2026-10.png": True,  # 刚生成 → 保留
+        }
+        ages = {
+            "ai_江苏_2026-10-20_ab12cd34.png": 5 * 86400,
+            "ai_江苏_2026-10-20_ab12cd34.png.meta.json": 5 * 86400,
+            "ai_江苏_today_99ff8811.png": 60,
+            "receipt_50_2026-10-20.png": 4 * 86400,
+            "monthly_2026-08.png": 61 * 86400,
+            "monthly_2026-10.png": 60,
+        }
+        for name, age in ages.items():
+            p = os.path.join(tmp, name)
+            with open(p, "wb") as f:
+                f.write(b"0" * 10)
+            os.utime(p, (now - age, now - age))
+        self.plugin._cleanup_tmp()
+        for name, kept in expect_kept.items():
+            self.assertEqual(os.path.isfile(os.path.join(tmp, name)), kept, name)
 
     async def test_a07_look_hit(self):
         ev = MockEvent()

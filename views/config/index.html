@@ -256,6 +256,16 @@
     </div>
 
     <div class="field">
+      <div class="label">♻️ 当日生图缓存</div>
+      <div class="hint">同一天相同内容的海报只真实生成一次，重复查询/推送直接复用已有图片（秒回、省生图费用）；关闭后每次都真实生成</div>
+      <label class="switch">
+        <input type="checkbox" id="gen_cache">
+        <span class="track"></span>
+        <span>开启当日生图缓存</span>
+      </label>
+    </div>
+
+    <div class="field">
       <div class="label">📅 每月推送油价走势图</div>
       <div class="hint">每月 1 日按推送时间向推送目标发送上一月的每日油价折线图</div>
       <label class="switch">
@@ -586,6 +596,7 @@
       ? 1 : cfg.change_remind_days);
     $("auto_provinces").checked = cfg.auto_provinces === true;
     $("gen_enable").checked = cfg.gen_enable !== false;
+    $("gen_cache").checked = cfg.gen_cache !== false;
     $("gen_model").value = cfg.gen_model || "";
     syncFrequencyUI();
     $("monthly_push").checked = cfg.monthly_push !== false;
@@ -618,6 +629,7 @@
       auto_provinces: $("auto_provinces").checked,
       monthly_push: $("monthly_push").checked,
       gen_enable: $("gen_enable").checked,
+      gen_cache: $("gen_cache").checked,
       gen_model: $("gen_model").value.trim(),
       private_targets: collectTargets("privRows"),
       group_targets: collectTargets("groupRows"),

@@ -146,7 +146,10 @@ def build_text_report(
             + f"\n\n⚡ {'、'.join(drop_names)}下调！{hint}"
         )
     else:
-        text += f"\n\n💡 {random.choice(FLAT_NOTICES)}"
+        # 持平提示语按 (日期, 省份) 确定选取（oil_1002）：当天内稳定可作缓存键，
+        # 跨天/跨省仍保持随机感
+        rng = random.Random(f"{today}|{prov}")
+        text += f"\n\n💡 {rng.choice(FLAT_NOTICES)}"
     countdown = adjust_countdown_text(next_time)
     if countdown:
         text += f"\n\n📅 {countdown}"
