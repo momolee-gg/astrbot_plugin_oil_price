@@ -367,9 +367,8 @@ class TestPrefsValidation(unittest.TestCase):
 
     def test_c24_real_schema_persists_dynamic_target_limits(self):
         plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        schema = json.load(
-            open(os.path.join(plugin_root, "_conf_schema.json"), encoding="utf-8")
-        )
+        with open(os.path.join(plugin_root, "_conf_schema.json"), encoding="utf-8") as f:
+            schema = json.load(f)
         d = os.path.join(TEST_ROOT, "schema_roundtrip")
         shutil.rmtree(d, ignore_errors=True)
         os.makedirs(d, exist_ok=True)
