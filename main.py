@@ -36,6 +36,8 @@ from .modules.constants import (
     CACHE_MIN_BYTES,
     FUEL_NAMES,
     FUEL_ORDER,
+    GROUP_TARGET_PREFIX,
+    PRIVATE_TARGET_PREFIX,
     PROVINCES,
     TMP_KEEP_DAYS,
     TMP_KEEP_MONTHLY_DAYS,
@@ -96,6 +98,18 @@ class OilPricePlugin(Star):
             self._web_stats_render,
             ["POST"],
             "stats_render",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/prefs/list",
+            self._web_prefs_list,
+            ["GET"],
+            "prefs_list",
+        )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/prefs/manage",
+            self._web_prefs_manage,
+            ["POST"],
+            "prefs_manage",
         )
 
         self._ensure_push_loop()
@@ -663,6 +677,71 @@ class OilPricePlugin(Star):
             return error_response("配置写入失败，详见日志", status_code=500)
         self._ensure_push_loop()
         return json_response({"ok": True, "app_key_ready": self.prefs.app_key_ready()})
+
+    # ================= WebUI：查询偏好记忆（oil_1004） =================
+
+    @staticmethod
+    def _pref_target_label(umo: str) -> str:
+        """UMO → 展示名（群聊/私聊 + ID）。"""
+        if GROUP_TARGET_PREFIX and umo.startswith(GROUP_TARGET_PREFIX):
+            return f"群聊 {umo.removeprefix(GROUP_TARGET_PREFIX)}"
+        if PRIVATE_TARGET_PREFIX and umo.startswith(PRIVATE_TARGET_PREFIX):
+            return f"私聊 {umo.removeprefix(PRIVATE_TARGET_PREFIX)}"
+        return umo
+
+    async def _web_prefs_list(self):
+        """查询省份记忆列表：按目标分组，含每条事件与当前推导偏好。"""
+        targets = []
+        for umo, events in self.store.all_query_events().items():
+            preferred = pick_preferred_provinces(events)
+            targets.append(
+                {
+                    "umo": umo,
+                    "label": self._pref_target_label(umo),
+                    "events": events,
+                    "preferred": preferred or [],
+                    "preferred_from_prefs": preferred is None,
+                }
+            )
+        # 推送目标在前、其余按标签排序，展示稳定
+        order = {u: i for i, u in enumerate(self.prefs.notify_targets())}
+        targets.sort(key=lambda t: (order.get(t["umo"], 99), t["label"]))
+        return json_response(
+            {"auto_provinces": self.prefs.auto_provinces(), "targets": targets}
+        )
+
+    async def _web_prefs_manage(self):
+        """查询省份记忆管理：update=改事件省份集 / delete=删事件 / clear=清空目标。"""
+        payload = await request.json(default={})
+        if not isinstance(payload, dict):
+            return error_response("无效的请求数据", status_code=400)
+        action = str(payload.get("action") or "")
+        umo = str(payload.get("umo") or "")
+        if not umo:
+            return error_response("缺少目标", status_code=400)
+        if action == "clear":
+            ok = self.store.clear_query_events(umo)
+            return json_response({"ok": ok})
+        want = payload.get("event") or {}
+        if not isinstance(want, dict) or not want:
+            return error_response("缺少事件", status_code=400)
+        if action == "delete":
+            ok = self.store.delete_query_event(umo, want)
+        elif action == "update":
+            provs = [
+                str(p).strip()
+                for p in (payload.get("provinces") or [])
+                if str(p).strip() in PROVINCES
+            ]
+            provs = list(dict.fromkeys(provs))
+            if not provs:
+                return error_response("省份集不能为空且需为合法省份", status_code=400)
+            ok = self.store.update_query_event(umo, want, provs)
+        else:
+            return error_response("未知操作", status_code=400)
+        if not ok:
+            return error_response("未找到匹配的记录（可能刚被删除）", status_code=404)
+        return json_response({"ok": True})
 
     # ================= WebUI：统计页 API =================
 

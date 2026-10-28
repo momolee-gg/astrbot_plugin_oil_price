@@ -127,6 +127,30 @@
   .trow .t-del:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
   .tadd { background: transparent; color: var(--chip-text); border: 1px dashed var(--line-strong); }
 
+  /* 查询省份记忆管理 */
+  .pref-empty { color: var(--sub); font-size: 13px; padding: 6px 0; }
+  .pref-target {
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px;
+  }
+  .pref-target-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
+  .pref-target-head b { font-weight: 600; }
+  .pref-now { color: var(--sub); font-size: 12.5px; }
+  .pref-target-head .t-del { margin-left: auto; }
+  .pref-rows { margin-top: 8px; }
+  .pref-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; font-size: 13px; border-top: 1px dashed var(--line); }
+  .pref-row:first-child { border-top: none; }
+  .pref-user { flex: 0 0 auto; color: var(--sub); }
+  .pref-time { flex: 0 0 auto; margin-left: auto; color: var(--sub); font-size: 12px; }
+  .pref-act {
+    flex: 0 0 auto; background: transparent; color: var(--btn); border: 1px solid var(--line);
+    border-radius: 7px; padding: 3px 10px; font-size: 12px; cursor: pointer; font-weight: 400;
+  }
+  .pref-act.danger { color: var(--err); }
+  .pref-act:hover { background: color-mix(in srgb, var(--btn) 10%, transparent); }
+  .pref-act.danger:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
+  .pref-edit { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-top: 1px dashed var(--line); }
+  .pref-edit input { flex: 1; min-width: 0; }
+
   /* 多选下拉 */
   .ms { position: relative; }
   .ms-box {
@@ -243,6 +267,13 @@
         <span class="track"></span>
         <span>按近期查询偏好选省</span>
       </label>
+    </div>
+
+    <div class="field">
+      <div class="label">🧠 查询省份记忆管理</div>
+      <div class="hint">省份自适应所记忆的各会话查询记录（每目标滚动保留最近 50 条）。可修改某条的省份集、删除单条或清空某目标记忆，清空后回退已配置省份</div>
+      <div id="prefBox"><div class="pref-empty">加载中…</div></div>
+      <button type="button" class="ghost" id="prefReload" style="margin-top:8px">刷新</button>
     </div>
 
     <div class="field">
@@ -679,6 +710,129 @@
     tb.innerHTML = head + body;
   }
 
+  // ---------- 查询省份记忆管理（oil_1004） ----------
+  let prefProvinces = [];
+
+  function prefManage(payload) {
+    return bridge.apiPost("prefs/manage", payload);
+  }
+
+  function prefRowEl(t, ev) {
+    const row = document.createElement("div");
+    row.className = "pref-row";
+    const user = document.createElement("span");
+    user.className = "pref-user";
+    user.textContent = (ev.u ? "用户 " + ev.u : "未知用户") + "：";
+    const provs = document.createElement("span");
+    provs.className = "pref-provs";
+    provs.textContent = (ev.p || []).join("、");
+    const time = document.createElement("span");
+    time.className = "pref-time";
+    time.textContent = (ev.t || "").replace("T", " ");
+    const edit = document.createElement("button");
+    edit.type = "button"; edit.className = "pref-act"; edit.textContent = "改";
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "pref-act danger"; del.textContent = "删";
+    row.append(user, provs, edit, del, time);
+
+    edit.addEventListener("click", () => {
+      const box = document.createElement("div");
+      box.className = "pref-edit";
+      const input = document.createElement("input");
+      input.type = "text"; input.placeholder = "省份 空格分隔，如：广东 江苏";
+      input.value = (ev.p || []).join(" ");
+      const save = document.createElement("button");
+      save.type = "button"; save.className = "pref-act"; save.textContent = "保存";
+      const cancel = document.createElement("button");
+      cancel.type = "button"; cancel.className = "pref-act danger"; cancel.textContent = "取消";
+      box.append(input, save, cancel);
+      row.replaceWith(box);
+      cancel.addEventListener("click", () => loadPrefs());
+      save.addEventListener("click", async () => {
+        const toks = input.value.trim().split(/[\s,，、]+/).filter(Boolean);
+        const bad = toks.filter((x) => !prefProvinces.includes(x));
+        if (!toks.length || bad.length) {
+          setStatus("省份需为合法名称且空格分隔：" + (bad.join("、") || "不能为空"), "err");
+          return;
+        }
+        try {
+          await prefManage({ action: "update", umo: t.umo, event: ev, provinces: toks });
+          setStatus("已修改", "ok");
+          await loadPrefs();
+        } catch (e) {
+          setStatus("修改失败: " + e.message, "err");
+        }
+      });
+    });
+
+    del.addEventListener("click", async () => {
+      try {
+        await prefManage({ action: "delete", umo: t.umo, event: ev });
+        setStatus("已删除", "ok");
+        await loadPrefs();
+      } catch (e) {
+        setStatus("删除失败: " + e.message, "err");
+      }
+    });
+    return row;
+  }
+
+  function prefTargetEl(t) {
+    const box = document.createElement("div");
+    box.className = "pref-target";
+    const head = document.createElement("div");
+    head.className = "pref-target-head";
+    const name = document.createElement("b");
+    name.textContent = t.label;
+    const now = document.createElement("span");
+    now.className = "pref-now";
+    now.textContent = t.preferred_from_prefs
+      ? "当前推导：事件不足，回退配置省份"
+      : "当前推导偏好：" + (t.preferred || []).join("、");
+    const clear = document.createElement("button");
+    clear.type = "button"; clear.className = "t-del"; clear.title = "清空该目标记忆"; clear.textContent = "清空";
+    clear.addEventListener("click", async () => {
+      try {
+        await prefManage({ action: "clear", umo: t.umo });
+        setStatus("已清空 " + t.label + " 的记忆", "ok");
+        await loadPrefs();
+      } catch (e) {
+        setStatus("清空失败: " + e.message, "err");
+      }
+    });
+    head.append(name, now, clear);
+
+    const rows = document.createElement("div");
+    rows.className = "pref-rows";
+    // 事件按新→旧展示，最近的排最上
+    (t.events || []).slice().reverse().forEach((ev) => rows.appendChild(prefRowEl(t, ev)));
+    box.append(head, rows);
+    return box;
+  }
+
+  async function loadPrefs() {
+    const box = $("prefBox");
+    if (!box) return;
+    try {
+      const res = await bridge.apiGet("prefs/list");
+      box.textContent = "";
+      if (!res.targets || !res.targets.length) {
+        const empty = document.createElement("div");
+        empty.className = "pref-empty";
+        empty.textContent = "暂无查询记录（用户主动查询后会出现在这里）";
+        box.appendChild(empty);
+        return;
+      }
+      res.targets.forEach((t) => box.appendChild(prefTargetEl(t)));
+    } catch (e) {
+      box.textContent = "";
+      const empty = document.createElement("div");
+      empty.className = "pref-empty";
+      empty.textContent = "读取失败: " + e.message;
+      box.appendChild(empty);
+    }
+  }
+
   function initStats(cfg) {
     statProv.options = cfg.province_options || [];
     statProv.selected = (cfg.provinces || []).slice(0, 5);
@@ -709,10 +863,14 @@
     try {
       const cfg = await bridge.apiGet("config/get");
       applyConfig(cfg);
+      prefProvinces = cfg.province_options || [];
       initStats(cfg);
+      loadPrefs();
     } catch (e) {
       setStatus("配置读取失败: " + e.message, "err");
     }
+
+    $("prefReload").addEventListener("click", loadPrefs);
 
     $("save").addEventListener("click", async () => {
       if (!provSel.selected.length) {

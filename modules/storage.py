@@ -130,6 +130,66 @@ class Store:
             return []
         return (self._load(self.events_file).get(umo)) or []
 
+    # ---------- 查询偏好记忆管理（oil_1004：WebUI 查看/修改/删除） ----------
+
+    def all_query_events(self) -> dict:
+        """全部查询事件原始数据 {umo: [event...]}（展示用）。"""
+        if not self.events_file:
+            return {}
+        return self._load(self.events_file)
+
+    @staticmethod
+    def _match_event(ev: dict, want: dict) -> bool:
+        """事件按 (用户, 省份集, 时间) 精确匹配——内容相同的多条同改同删，无副作用。"""
+        return (
+            str((ev or {}).get("u") or "") == str((want or {}).get("u") or "")
+            and [str(p) for p in (ev or {}).get("p") or []]
+            == [str(p) for p in (want or {}).get("p") or []]
+            and str((ev or {}).get("t") or "") == str((want or {}).get("t") or "")
+        )
+
+    def update_query_event(self, umo: str, want: dict, provs: list) -> bool:
+        """把匹配的事件省份集改为 provs；命中并修改返回 True。"""
+        if not self.events_file or not umo or not provs:
+            return False
+        data = self._load(self.events_file)
+        events = data.get(umo) or []
+        hit = False
+        for ev in events:
+            if self._match_event(ev, want):
+                ev["p"] = [str(p) for p in provs]
+                hit = True
+        if hit:
+            self._save(self.events_file, data)
+        return hit
+
+    def delete_query_event(self, umo: str, want: dict) -> bool:
+        """删除匹配的查询事件；命中返回 True。"""
+        if not self.events_file or not umo:
+            return False
+        data = self._load(self.events_file)
+        events = data.get(umo) or []
+        rest = [ev for ev in events if not self._match_event(ev, want)]
+        if len(rest) == len(events):
+            return False
+        if rest:
+            data[umo] = rest
+        else:
+            data.pop(umo, None)
+        self._save(self.events_file, data)
+        return True
+
+    def clear_query_events(self, umo: str) -> bool:
+        """清空某目标的全部查询事件（下次推送回退配置省份）。"""
+        if not self.events_file or not umo:
+            return False
+        data = self._load(self.events_file)
+        if umo not in data:
+            return False
+        data.pop(umo)
+        self._save(self.events_file, data)
+        return True
+
 
 def pick_preferred_provinces(
     events: list, window: int = 20, top: int = 3, min_events: int = 3

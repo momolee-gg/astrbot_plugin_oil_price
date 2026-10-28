@@ -489,6 +489,39 @@ class TestQueryEvents(unittest.TestCase):
         store.record_query("umo", "u", ["江苏"])
         self.assertEqual(store.query_events("umo"), [])
 
+    def test_oil1004_manage_update_delete_clear(self):
+        """记忆管理（oil_1004）：按 (u,p,t) 精确匹配改/删，清空目标。"""
+        self.store.record_query("umo1", "u1", ["江苏"])
+        self.store.record_query("umo1", "u2", ["上海"])
+        ev1 = self.store.query_events("umo1")[0]
+
+        # 改：匹配事件省份集更新，其余不动
+        self.assertTrue(self.store.update_query_event("umo1", ev1, ["广东", "四川"]))
+        events = self.store.query_events("umo1")
+        self.assertEqual(events[0]["p"], ["广东", "四川"])
+        self.assertEqual(events[1]["p"], ["上海"])
+        # 不匹配/空省份 → False 且不落盘
+        self.assertFalse(
+            self.store.update_query_event("umo1", {"u": "x", "p": [], "t": ""}, ["江苏"])
+        )
+        self.assertFalse(self.store.update_query_event("umo1", ev1, []))
+
+        # 删：匹配删除；目标删空后键移除
+        ev2 = self.store.query_events("umo1")[1]
+        self.assertTrue(self.store.delete_query_event("umo1", ev2))
+        self.assertEqual(len(self.store.query_events("umo1")), 1)
+        self.assertTrue(
+            self.store.delete_query_event("umo1", self.store.query_events("umo1")[0])
+        )
+        self.assertEqual(self.store.query_events("umo1"), [])
+        self.assertNotIn("umo1", self.store.all_query_events())
+
+        # 清空：无键时返回 False
+        self.assertFalse(self.store.clear_query_events("umo1"))
+        self.store.record_query("umo1", "u1", ["江苏"])
+        self.assertTrue(self.store.clear_query_events("umo1"))
+        self.assertEqual(self.store.query_events("umo1"), [])
+
     def test_f08_picker_fallback_and_top(self):
         from astrbot_plugin_oil_price.modules.storage import (
             pick_preferred_provinces as pick,
@@ -1867,6 +1900,81 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             resp = await pl._web_stats_render()
         self.assertEqual(resp.status_code, 400)
 
+    # ---------- oil_1004：查询省份记忆管理 API ----------
+
+    async def test_oil1004_prefs_list_and_label(self):
+        self.plugin.store.record_query("default:GroupMessage:10001", "u1", ["广东"])
+        self.plugin.store.record_query("default:FriendMessage:769411680", "u2", ["四川"])
+        self.plugin.store.record_query("raw:umo:9", "u3", ["浙江"])
+        with mock.patch.object(plugin_main, "request", FakeRequest(None)):
+            resp = await self.plugin._web_prefs_list()
+        data = json.loads(resp.body)
+        self.assertIn("auto_provinces", data)
+        labels = {t["label"]: t for t in data["targets"]}
+        self.assertIn("群聊 10001", labels)
+        self.assertIn("私聊 769411680", labels)
+        self.assertIn("raw:umo:9", labels)  # 无法识别的 UMO 原样展示
+        g = labels["群聊 10001"]
+        self.assertEqual(len(g["events"]), 1)
+        self.assertTrue(g["preferred_from_prefs"])  # 事件不足 → 回退配置省
+
+    async def test_oil1004_prefs_manage_roundtrip(self):
+        umo = "default:GroupMessage:10001"
+        for _ in range(3):
+            self.plugin.store.record_query(umo, "u1", ["江苏"])
+        ev = self.plugin.store.query_events(umo)[0]
+
+        # update：非法/空省份被拒；合法更新生效
+        with mock.patch.object(
+            plugin_main,
+            "request",
+            FakeRequest(
+                {"action": "update", "umo": umo, "event": ev, "provinces": ["火星"]}
+            ),
+        ):
+            resp = await self.plugin._web_prefs_manage()
+        self.assertEqual(resp.status_code, 400)
+        with mock.patch.object(
+            plugin_main,
+            "request",
+            FakeRequest(
+                {"action": "update", "umo": umo, "event": ev, "provinces": ["广东", "四川"]}
+            ),
+        ):
+            resp = await self.plugin._web_prefs_manage()
+        data = json.loads(resp.body)
+        self.assertTrue(data["ok"])
+        self.assertEqual(self.plugin.store.query_events(umo)[0]["p"], ["广东", "四川"])
+
+        # delete：事件不匹配 → 404
+        with mock.patch.object(
+            plugin_main,
+            "request",
+            FakeRequest(
+                {"action": "delete", "umo": umo, "event": {"u": "x", "p": [], "t": ""}}
+            ),
+        ):
+            resp = await self.plugin._web_prefs_manage()
+        self.assertEqual(resp.status_code, 404)
+
+        # clear：清空后列表为空；重复 clear → ok:False
+        with mock.patch.object(
+            plugin_main, "request", FakeRequest({"action": "clear", "umo": umo})
+        ):
+            resp = await self.plugin._web_prefs_manage()
+        self.assertTrue(json.loads(resp.body)["ok"])
+        self.assertEqual(self.plugin.store.query_events(umo), [])
+
+        # 非法 action / 缺 umo
+        with mock.patch.object(
+            plugin_main, "request", FakeRequest({"action": "nuke", "umo": umo})
+        ):
+            resp = await self.plugin._web_prefs_manage()
+        self.assertEqual(resp.status_code, 400)
+        with mock.patch.object(plugin_main, "request", FakeRequest({"action": "clear"})):
+            resp = await self.plugin._web_prefs_manage()
+        self.assertEqual(resp.status_code, 400)
+
     async def test_save_handler_valid_and_persist_called(self):
         cfg = FakeConfig(base_config())
         pl, ctx, _ = make_plugin(name=self.id().split(".")[-1] + "save", config=cfg)
@@ -1910,6 +2018,8 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/astrbot_plugin_oil_price/config/get", routes)
         self.assertIn("/astrbot_plugin_oil_price/config/save", routes)
         self.assertIn("/astrbot_plugin_oil_price/stats/render", routes)
+        self.assertIn("/astrbot_plugin_oil_price/prefs/list", routes)
+        self.assertIn("/astrbot_plugin_oil_price/prefs/manage", routes)
 
 
 # ======================= 真实 API 冒烟（可选） =======================
