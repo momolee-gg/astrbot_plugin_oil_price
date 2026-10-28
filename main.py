@@ -43,7 +43,7 @@ from .modules.constants import (
 from .modules.storage import Store, pick_preferred_provinces
 
 PLUGIN_NAME = "astrbot_plugin_oil_price"
-PLUGIN_VERSION = "1.1.1"
+PLUGIN_VERSION = "1.2.0"
 DATA_DIR = os.path.join(get_astrbot_data_path(), "plugin_data", PLUGIN_NAME)
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 QUOTA_FILE = os.path.join(DATA_DIR, "user_quota.json")
