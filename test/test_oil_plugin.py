@@ -1,4 +1,4 @@
-"""油价插件自动化测试（astrbot_plugin_oil_price v1.3.0）。
+"""油价插件自动化测试（astrbot_plugin_oil_price v1.3.1）。
 
 运行方式（容器内）：
     cd /AstrBot/data/plugins && python3 -m unittest astrbot_plugin_oil_price.tests.test_oil_plugin -v
