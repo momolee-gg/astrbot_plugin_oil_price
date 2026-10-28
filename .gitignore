@@ -31,6 +31,11 @@ last_price.json
 oil_backup*/
 oil_backup*/
 
+# 需求文档 / 测试报告：仅本地保留，不入库（2026-10-26 约定）
+/oil_*/
+/docs/requirements/
+/docs/reports/
+
 # 编辑器 / 系统
 .idea/
 .vscode/
