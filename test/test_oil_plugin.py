@@ -136,7 +136,8 @@ def fake_price_data(p92=8.09, ch92=0.10):
             "0": {"price": 7.71, "before": 7.71, "change": None, "pct": None},
         },
         "before_change_time": "20261023",
-        "next_change_time": "20261030",
+        # 动态未来生效日（窗口=生效日前一天），避免跨天后倒计时文案消失导致测试脆弱
+        "next_change_time": (datetime.now().date() + timedelta(days=5)).strftime("%Y%m%d"),
     }
 
 
@@ -643,17 +644,27 @@ class TestReporting(unittest.TestCase):
         self.assertNotIn("（", reporting.fuel_line("92", {"price": 8.09, "change": None}))
 
     def test_countdown_branches(self):
+        """倒计时按「生效日前一日 = 窗口日」计算（oil_1006 修复 ShowAPI 生效日口径）。"""
         today = datetime.now().date()
         self.assertIn(
             "7 天",
-            reporting.adjust_countdown_text((today + timedelta(days=7)).strftime("%Y%m%d")),
+            reporting.adjust_countdown_text((today + timedelta(days=8)).strftime("%Y%m%d")),
         )
         self.assertIn(
             "明晚",
+            reporting.adjust_countdown_text((today + timedelta(days=2)).strftime("%Y%m%d")),
+        )
+        self.assertIn(
+            "就是今晚",
             reporting.adjust_countdown_text((today + timedelta(days=1)).strftime("%Y%m%d")),
         )
-        self.assertIn("就是今晚", reporting.adjust_countdown_text(today.strftime("%Y%m%d")))
         self.assertEqual(reporting.adjust_countdown_text(""), "")
+        # 生效日=今天 → 窗口已过，不再提示
+        self.assertEqual(reporting.adjust_countdown_text(today.strftime("%Y%m%d")), "")
+        # 日期串为窗口日（生效日前一天）
+        days, d_str = reporting.days_until((today + timedelta(days=3)).strftime("%Y%m%d"))
+        self.assertEqual(days, 2)
+        self.assertEqual(d_str, (today + timedelta(days=2)).strftime("%m月%d日"))
 
     def test_text_report_rise_and_fuels_filter(self):
         data = {
@@ -1637,9 +1648,13 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self.ctx.sent_messages), 0)
         self.cfg["basic"]["change_remind_days"] = 3
         with mock.patch.object(
-            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(4)
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(5)
         ):
-            await self.plugin._advance_remind(rows)  # 剩余 4 天 > N=3：仍不发
+            h = self.plugin.store.history()  # 清当日缓存，换新窗口日期
+            h["江苏"].pop(self.plugin.store.today(), None)
+            self.plugin.store._save(self.plugin.store.history_file, h)
+            rows = await self.plugin._collect_today(["江苏"])
+            await self.plugin._advance_remind(rows)  # 窗口剩余 4 天 > N=3：仍不发
             self.assertEqual(len(self.ctx.sent_messages), 0)
         self.cfg["basic"]["change_remind_days"] = 1
         with mock.patch.object(

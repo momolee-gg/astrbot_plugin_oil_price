@@ -1,7 +1,7 @@
 """文字版播报文案。仅依赖 constants。"""
 
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .constants import FUEL_NAMES, FUEL_ORDER
 
@@ -39,14 +39,21 @@ def fuel_line(fuel: str, entry: dict) -> str:
 
 
 def _days_until(next_time: str) -> tuple:
-    """距下次调价窗口的天数与日期串（如 (6, "10月30日")）；无窗口返回 (None, "")。"""
+    """距下次调价窗口的天数与窗口日期串（如 (6, "10月29日")）；无/过期返回 (None, "")。
+
+    ShowAPI 的日期是**新价生效日**（如 20261030 = 10-29 24 时调整、10-30 起
+    按新价执行，与官方“9月24日24时起调整→生效日 9/25”口径一致），因此
+    窗口时刻 = 生效日前一日 24 时——倒计时与文案日期都按窗口日计算。
+    """
     if not next_time:
         return None, ""
     try:
-        target = datetime.strptime(str(next_time), "%Y%m%d")
+        effective = datetime.strptime(str(next_time), "%Y%m%d").date()
     except ValueError:
         return None, ""
-    return (target.date() - datetime.now().date()).days, target.strftime("%m月%d日")
+    window_day = effective - timedelta(days=1)
+    days = (window_day - datetime.now().date()).days
+    return days, (window_day.strftime("%m月%d日") if days >= 0 else "")
 
 
 def days_until(next_time: str) -> tuple:

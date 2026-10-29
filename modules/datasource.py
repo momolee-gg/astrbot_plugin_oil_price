@@ -15,7 +15,9 @@ def fetch_province(prov: str, app_key: str) -> dict:
     """查询单省行情，返回规整数据：
 
     {"fuels": {"92": {"price", "before", "change", "pct"}, ...},
-     "before_change_time": str, "next_change_time": "YYYYMMDD"}
+     "before_change_time": str, "next_change_time": "YYYYMMDD"（新价生效日，
+     窗口时刻为其前一日 24 时，如 20261030 → 10-29 24 时调整）
+    }
     """
     if not app_key:
         raise ShowApiError("未配置 appKey")
