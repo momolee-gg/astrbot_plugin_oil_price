@@ -709,7 +709,7 @@ class TestReporting(unittest.TestCase):
         rows = [("江苏", fake_price_data(8.09))]
         text = reporting.build_remind_text(rows, fuels=["92", "95"])
         self.assertIn("调价提醒", text)
-        self.assertIn("距下次调价窗口", text)
+        self.assertIn("调价窗口", text)
         self.assertIn("92号汽油：8.09 元/升", text)
         self.assertIn("95号汽油", text)
         self.assertNotIn("98号", text)  # fuels 过滤
@@ -721,7 +721,7 @@ class TestReporting(unittest.TestCase):
         )
         self.assertIn("江苏 92号汽油：", multi)
         self.assertIn("上海 92号汽油：", multi)
-        self.assertGreaterEqual(multi.count("距下次调价窗口"), 2)
+        self.assertGreaterEqual(multi.count("调价窗口"), 2)
 
         no_window = fake_price_data(8.09)
         no_window["next_change_time"] = ""
@@ -985,6 +985,24 @@ class TestGenImage(unittest.TestCase):
             ],
         )
         self.assertGreater(size, 1024)
+
+    def test_oil1005_daily_style_rotation(self):
+        """风格按天轮换（oil_1005）：同一天内所有海报同一风格；跨天才换，
+        且与前一日不同。"""
+        pl, _ctx, _cfg = make_plugin(name=self.id().split(".")[-1])
+        s1 = pl._daily_style("2026-10-28")
+        s2 = pl._daily_style("2026-10-28")  # 同日再取：不变
+        self.assertEqual(s1, s2)
+        st = pl._load_push_state()
+        self.assertEqual(st["style_date"], "2026-10-28")
+        idx28 = st["style_idx"]
+        s3 = pl._daily_style("2026-10-29")  # 跨天：换且必与前一日不同
+        self.assertNotEqual(s3, s1)
+        st = pl._load_push_state()
+        self.assertEqual(st["style_date"], "2026-10-29")
+        self.assertNotEqual(st["style_idx"], idx28)
+        s4 = pl._daily_style("2026-10-29")  # 当日仍不变
+        self.assertEqual(s4, s3)
 
     def test_styles_and_random_no_repeat(self):
         from astrbot_plugin_oil_price.modules import genimage

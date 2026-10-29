@@ -62,7 +62,7 @@ NO_KEY_HINT = (
     PLUGIN_NAME,
     "momolee-gg",
     "全国油价查询与出图播报（ShowAPI 数据源）：多省推送、"
-    "AI 生图每日海报（5 风格随机轮换）、推送频率（每日/每周/关闭）、"
+    "AI 生图每日海报（5 风格按日轮换，同日同风格）、推送频率（每日/每周/关闭）、"
     "调价提醒（剩余≤N天预告 + 落地确认，AI 图片）、推送省份自适应查询偏好、"
     "油价走势折线图、月度走势推送、加油结算单、"
     "目标绑定查询限额、WebUI 设置与统计页",
@@ -185,14 +185,23 @@ class OilPricePlugin(Star):
             f.write(json.dumps(st, ensure_ascii=False))
         os.replace(tmp, self._state_file)
 
-    def _pick_style(self) -> str:
-        """随机挑一个与上次不同的风格，并记录到推送状态。"""
+    def _daily_style(self, date: str) -> str:
+        """当日统一风格（oil_1005）：风格按「天」轮换，与消息类型/渠道无关——
+        同一天内查询、推送、调价提醒的所有海报共用同一风格；每天随机换一个
+        与前一日不同的风格。"""
         st = self._load_push_state()
-        idx = genimage.pick_style_index(st.get("last_style"))
-        st["last_style"] = idx
+        idx = st.get("style_idx")
+        if (
+            st.get("style_date") == date
+            and isinstance(idx, int)
+            and 0 <= idx < len(genimage.STYLES)
+        ):
+            return genimage.STYLES[idx]["text"]
+        idx = genimage.pick_style_index(idx if isinstance(idx, int) else None)
+        st["style_idx"] = idx
+        st["style_date"] = date
         self._save_push_state(st)
-        name = genimage.STYLES[idx]["name"]
-        logger.info(f"[油价插件] 本次生图风格：{name}")
+        logger.info(f"[油价插件] 今日生图风格：{genimage.STYLES[idx]['name']}")
         return genimage.STYLES[idx]["text"]
 
     def _image_ready(self) -> bool:
@@ -591,7 +600,7 @@ class OilPricePlugin(Star):
             if cached:
                 logger.info(f"[油价插件] 生图缓存命中: {os.path.basename(cached)}")
                 return cached
-        style = self._pick_style()
+        style = self._daily_style(date)
         prompt = genimage.prompt_from_text(text, style=style)
         path = await asyncio.to_thread(
             genimage.generate,
