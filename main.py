@@ -485,23 +485,25 @@ class OilPricePlugin(Star):
                 logger.error(f"[油价插件] 查询 {prov} 失败: {e}")
         return rows
 
-    def _report_text(self, prov: str, data: dict) -> str:
+    def _report_text(self, prov: str, data: dict, alarm: bool = True) -> str:
         return reporting.build_text_report(
             prov,
             data,
             trend_series=self.store.trend_series,
             fuels=self.prefs.default_fuels(),
+            alarm=alarm,
         )
 
-    def _fallback_text(self, rows: list) -> str:
+    def _fallback_text(self, rows: list, alarm: bool = True) -> str:
         """只发文字时的文案：单省=完整多行报告，多省=紧凑速览。
 
         出图失败与图片关闭两条路径共用；此前单省出图失败误用多省速览，
-        各油号挤成一行（oil_1001 修复）。
+        各油号挤成一行（oil_1001 修复）。推送回退保持警报样式（alarm=True），
+        查询回退传 alarm=False 与查询中性播报一致（oil_1007）。
         """
         if len(rows) == 1:
             prov, data = rows[0]
-            return self._report_text(prov, data)
+            return self._report_text(prov, data, alarm=alarm)
         return reporting.build_multi_text(rows, self.prefs.default_fuels())
 
     def _gen_endpoints(self) -> list:
@@ -847,7 +849,7 @@ class OilPricePlugin(Star):
             return
         self._record_query(event, provs)
         if prov_arg:
-            text = self._report_text(prov_arg, rows[0][1])
+            text = self._report_text(prov_arg, rows[0][1], alarm=False)
         else:
             text = reporting.build_multi_text(rows, self.prefs.default_fuels())
         yield event.plain_result(text + extra)
@@ -875,11 +877,13 @@ class OilPricePlugin(Star):
                 "（图片消息未开启或未配置生图端点，已发文字版。"
                 "请到 WebUI「油价设置」开启图片消息并确认 bot 已配置模型）"
             )
-            yield event.plain_result(self._fallback_text(rows) + hint)
+            yield event.plain_result(self._fallback_text(rows, alarm=False) + hint)
             return
         if len(provs) == 1 and rows:
             prov, data = rows[0]
-            poster_text = self._report_text(prov, data)
+            # 查询走中性播报（oil_1007）：不带警报标题，文案哈希与推送不同，
+            # 不会命中落地确认推送生成的同一张海报
+            poster_text = self._report_text(prov, data, alarm=False)
             base_name, poster_provs = f"ai_{prov}", [prov]
         else:
             poster_text = reporting.build_multi_text(rows, self.prefs.default_fuels())
@@ -902,7 +906,8 @@ class OilPricePlugin(Star):
         except Exception as e:
             logger.error(f"[油价插件] 出图失败: {e}")
             yield event.plain_result(
-                self._fallback_text(rows) + "\n\n⚠️ 海报生成失败，已回退文字版"
+                self._fallback_text(rows, alarm=False)
+                + "\n\n⚠️ 海报生成失败，已回退文字版"
             )
 
     @filter.command("看看油价")

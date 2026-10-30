@@ -707,6 +707,44 @@ class TestReporting(unittest.TestCase):
         self.assertNotIn("下调提醒", text2)
         self.assertIn("💡", text2)
 
+    def test_oil1007_query_neutral_no_alarm(self):
+        """alarm=False（查询路径）：不加警报标题与 ⚡ 提示，涨跌留在价格行标注。"""
+        data = {
+            "fuels": {
+                "92": {"price": 8.09, "change": 0.10, "pct": None},
+                "95": {"price": 8.62, "change": -0.05, "pct": None},
+                "98": {"price": 9.98, "change": 0.0, "pct": None},
+            },
+            "next_change_time": (
+                datetime.now().date() + timedelta(days=5)
+            ).strftime("%Y%m%d"),
+        }
+        text = reporting.build_text_report(
+            "江苏", data, fuels=["92", "95", "98"], alarm=False
+        )
+        self.assertNotIn("提醒", text)
+        self.assertNotIn("⚡", text)
+        self.assertNotIn("💡", text)  # 非持平日不出持平提示
+        self.assertIn("↑涨 0.10", text)  # 涨跌保留在价格行
+        self.assertIn("↓降 0.05", text)
+        self.assertIn("📅", text)  # 倒计时保留
+
+    def test_oil1007_query_neutral_flat_keeps_notice(self):
+        """alarm=False 且持平日：仍带 💡 持平提示，且无警报标题。"""
+        flat = {
+            "fuels": {
+                "92": {"price": 8.58, "change": 0.0, "pct": None},
+                "95": {"price": 9.12, "change": 0.0, "pct": None},
+                "98": {"price": 11.19, "change": 0.0, "pct": None},
+            },
+            "next_change_time": (
+                datetime.now().date() + timedelta(days=5)
+            ).strftime("%Y%m%d"),
+        }
+        text = reporting.build_text_report("江苏", flat, fuels=["92"], alarm=False)
+        self.assertIn("💡", text)
+        self.assertNotIn("提醒", text)
+
     def test_multi_text_format_and_filter(self):
         rows = [("江苏", fake_price_data()), ("上海", fake_price_data(8.05))]
         text = reporting.build_multi_text(rows, fuels=["92", "95"])
@@ -1250,6 +1288,55 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("今日油价速览", text)
         self.assertIn("海报生成失败", text)
 
+    # ---------- oil_1007：查询与推送文案分型 ----------
+
+    @staticmethod
+    def _capturing_gen(seen: dict):
+        """包一层记录提示词的假生图，便于断言海报文案。"""
+
+        def capture(prompt, endpoints, model=None, size=None, out_dir="/tmp", name="g.png"):
+            seen["prompt"] = prompt
+            return _fake_genimage_generate(prompt, endpoints, model, size, out_dir, name)
+
+        return capture
+
+    async def test_oil1007_today_poster_neutral(self):
+        """/今日油价 海报文案走中性播报（oil_1007）：提示词不含警报标题与 ⚡。"""
+        seen = {}
+        with mock.patch.object(
+            plugin_main.genimage, "generate", self._capturing_gen(seen)
+        ):
+            out = await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+        self.assertEqual(out[-1]["type"], "chain")
+        prompt = seen["prompt"]
+        self.assertIn("广东油价", prompt)
+        self.assertNotIn("油价上涨提醒", prompt)
+        self.assertNotIn("上调！", prompt)  # 中性文案无 ⚡ 提示（模板图标说明除外）
+        self.assertIn("大字标题「今日油价」", prompt)  # 海报标题不再是警报样式
+
+    async def test_oil1007_today_fallback_neutral(self):
+        """查询出图失败回退文字同样中性：不带警报标题与 ⚡ 提示。"""
+        with mock.patch.object(
+            plugin_main.genimage, "generate", side_effect=RuntimeError("x")
+        ):
+            out = await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
+        text = out[-1]["text"]
+        self.assertIn("广东油价", text)
+        self.assertNotIn("提醒", text)
+        self.assertNotIn("⚡", text)
+
+    async def test_oil1007_push_keeps_alarm(self):
+        """同样涨跌数据走推送路径：仍带「油价上涨提醒」警报标题与 ⚡ 提示。"""
+        seen = {}
+        with mock.patch.object(
+            plugin_main.genimage, "generate", self._capturing_gen(seen)
+        ):
+            await self.plugin._push_report(
+                [("广东", fake_price_data())], ["default:GroupMessage:10001"]
+            )
+        self.assertIn("油价上涨提醒", seen["prompt"])
+        self.assertIn("⚡", seen["prompt"])
+
     # ---------- oil_1002：当日生图缓存 ----------
 
     def _counting_gen(self, calls: list):
@@ -1274,14 +1361,17 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(os.path.isfile(os.path.join(plugin_main.TMP_DIR, meta)))
 
     async def test_oil1002_push_and_query_share_cache(self):
-        """单省推送后查询（反之亦然）同文本命中：合计只生图 1 次。"""
+        """oil_1007 起推送（警报）与查询（中性）文案分型：涨跌日不再共用海报，
+        各自真实生图一次；同 kind 重复才命中各自缓存。"""
         calls = []
         with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
             await self.plugin._push_report(
                 [("江苏", fake_price_data(8.09))], ["default:GroupMessage:10001"]
             )
             await run_cmd(self.plugin.today_cmd(MockEvent(), "江苏"))
-        self.assertEqual(len(calls), 1)
+            await run_cmd(self.plugin.today_cmd(MockEvent(), "江苏"))
+        # 1 张推送海报（警报文案）+ 1 张查询海报（中性文案）；第二次查询命中缓存
+        self.assertEqual(len(calls), 2)
 
     async def test_oil1002_multi_order_normalized_shared(self):
         """`广东 江苏` 与 `江苏 广东` 归一为同一文本：命中同一张缓存图。"""
@@ -1324,7 +1414,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
     async def test_oil1002_metaless_png_regenerates(self):
         """只有 PNG 没有 meta 的历史文件：视为未命中，重生成并补写 meta。"""
         calls = []
-        text = self.plugin._report_text("广东", fake_price_data(8.09))
+        text = self.plugin._report_text("广东", fake_price_data(8.09), alarm=False)
         h = self.plugin._text_hash(text)
         path = os.path.join(
             plugin_main.TMP_DIR,

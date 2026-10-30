@@ -129,9 +129,20 @@ def build_remind_text(rows: list, fuels: list = None) -> str:
 
 
 def build_text_report(
-    prov: str, data: dict, trend_series=None, trend_days: int = 14, fuels: list = None
+    prov: str,
+    data: dict,
+    trend_series=None,
+    trend_days: int = 14,
+    fuels: list = None,
+    alarm: bool = True,
 ) -> str:
-    """单省完整文字报告。fuels: 只展示的油号列表，None 表示全部。"""
+    """单省完整文字报告。fuels: 只展示的油号列表，None 表示全部。
+
+    alarm=True（推送路径）涨跌日套「油价上涨/下调提醒」警报标题与 ⚡ 提示；
+    alarm=False（用户主动查询，oil_1007）中性播报——不加警报标题与提示，
+    涨跌仍体现在每行 ↑涨/↓降 标注里。查询与推送文案不同，当日生图缓存
+    也因此天然分开，不再返回与落地确认推送逐字节相同的海报。
+    """
     show = [f for f in (fuels or FUEL_ORDER)]
     today = datetime.now().strftime("%m-%d")
     lines = [f"⛽ {prov}油价（{today}）"]
@@ -165,21 +176,21 @@ def build_text_report(
                 text += f"\n\n📈 近期走势（{len(series)} 日）：{'；'.join(parts)}"
 
     next_time = data.get("next_change_time") or ""
-    if rise_names:
+    if rise_names and alarm:
         hint = rise_hint_text(next_time)
         text = (
             "🚨🚨 油价上涨提醒 🚨🚨\n"
             + text
             + f"\n\n⚡ {'、'.join(rise_names)}上调！{hint}"
         )
-    elif drop_names:
+    elif drop_names and alarm:
         hint = drop_hint_text(next_time)
         text = (
             "🎉🎉 油价下调提醒 🎉🎉\n"
             + text
             + f"\n\n⚡ {'、'.join(drop_names)}下调！{hint}"
         )
-    else:
+    elif not rise_names and not drop_names:
         # 持平提示语按 (日期, 省份) 确定选取（oil_1002）：当天内稳定可作缓存键，
         # 跨天/跨省仍保持随机感
         rng = random.Random(f"{today}|{prov}")
