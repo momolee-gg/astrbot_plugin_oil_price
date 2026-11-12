@@ -633,6 +633,228 @@ class TestDatasource(unittest.TestCase):
                 datasource.fetch_province("江苏", "k")
 
 
+# ======================= 调价预测（oil_1008） =======================
+
+
+class TestForecast(unittest.TestCase):
+    """调价预测测算：均价环比、搁浅阈值、错期守卫、接口解析与缓存。"""
+
+    def setUp(self):
+        from astrbot_plugin_oil_price.modules import forecast
+
+        self.fc = forecast
+        self.fc._CACHE.update(date=None, value=None)
+
+    def tearDown(self):
+        self.fc._CACHE.update(date=None, value=None)
+
+    @staticmethod
+    def _closes(*prices, start=(2026, 10, 1)):
+        """合成升序日线序列（日期连续即可，estimate 只用顺序与终点日期）。"""
+        from datetime import date, timedelta
+
+        d0 = date(*start)
+        return [((d0 + timedelta(days=i)).isoformat(), p) for i, p in enumerate(prices)]
+
+    def test_estimate_drop(self):
+        """两期均价环比为负：方向=drop、元/吨与每升折算正确。"""
+        # 前 12 根 100（上期均价），本期 10 根 90 → -10% → -10×0.62×100 = -620 元/吨
+        closes = self._closes(*([100.0] * 12 + [90.0] * 10))
+        out = self.fc.estimate(closes, "2026-10-13")
+        self.assertEqual(out["dir"], "drop")
+        self.assertEqual(out["rate"], -10.0)
+        self.assertEqual(out["per_ton"], -620)
+        self.assertEqual(out["delta"]["92"], -0.49)
+        self.assertEqual(out["delta"]["95"], -0.52)
+        self.assertEqual(out["delta"]["0"], -0.53)
+        self.assertEqual(out["base_eff"], "2026-10-13")
+        self.assertEqual(out["est_date"], "2026-10-22")
+
+    def test_estimate_rise(self):
+        """两期均价环比为正：方向=rise。"""
+        closes = self._closes(*([90.0] * 12 + [99.0] * 10))
+        out = self.fc.estimate(closes, "2026-10-13")
+        self.assertEqual(out["dir"], "rise")
+        self.assertEqual(out["per_ton"], 558)
+        self.assertEqual(out["delta"]["92"], 0.44)
+
+    def test_estimate_flat(self):
+        """环比 +0.4% → 25 元/吨 < 50 搁浅线 → 方向=flat。"""
+        closes = self._closes(*([100.0] * 12 + [100.4] * 10))
+        out = self.fc.estimate(closes, "2026-10-13")
+        self.assertEqual(out["dir"], "flat")
+        # per_ton 保留原始测算值；dir=flat 时文案不标每升涨跌
+        self.assertEqual(out["per_ton"], 25)
+
+    def test_estimate_guards(self):
+        """数据不足与错期守卫：返回 None 而非错值。"""
+        # 数据不足（<22 根）
+        self.assertIsNone(self.fc.estimate(self._closes(*([100.0] * 15)), "2026-10-11"))
+        # 错期守卫：上期终点距本期终点 <8 或 >20 个交易日 → None
+        closes = self._closes(*([100.0] * 30))
+        self.assertIsNone(self.fc.estimate(closes, "2026-10-26"))  # gap=5
+        self.assertIsNone(self.fc.estimate(closes, "2026-10-06"))  # gap=25
+        # 正常周期（gap=9、10）均可算
+        self.assertIsNotNone(self.fc.estimate(closes, "2026-10-21"))  # gap=10
+        self.assertIsNotNone(self.fc.estimate(closes, "2026-10-22"))  # gap=9
+
+    def test_fetch_parse(self):
+        """NYMEX/调价历史接口解析（含坏行跳过、降序反转）与 build_forecast 串接。"""
+        # 接口降序返回：30 根全部 100.0 → 环比 0 → 搁浅
+        nymex = [
+            {"DATE": f"2026-10-{d:02d} 00:00:00", "CLOSE": "100.0"}
+            for d in range(30, 0, -1)
+        ]
+
+        def fake_http(url, *a, **k):
+            if "RPTA_WEB_JY_HQ" in url:
+                return {"result": {"data": nymex}}
+            return {"result": {"data": [{"DIM_DATE": "2026-10-21 00:00:00", "QY_FD": 345}]}}
+
+        with mock.patch.object(self.fc, "_http_json", side_effect=fake_http):
+            self.assertEqual(
+                self.fc.fetch_wti_closes(),
+                [(f"2026-10-{d:02d}", 100.0) for d in range(1, 31)],
+            )
+            self.assertEqual(
+                self.fc.fetch_last_adjust(),
+                {"eff": "2026-10-21", "qy_fd": 345.0, "cy_fd": None},
+            )
+            # 生效日(10-21) ≠ 明天(今天传 10-19) → 走估算：环比 0 → 搁浅
+            out = self.fc.build_forecast("2026-10-19")
+        self.assertIsNotNone(out)
+        self.assertEqual(out["dir"], "flat")
+        self.assertNotIn("official", out)
+
+    def test_build_forecast_official_branch(self):
+        """公告已出（生效日=明天）：直接采用官方每吨幅度，不再估算。"""
+        nymex = [
+            {"DATE": f"2026-10-{d:02d} 00:00:00", "CLOSE": "100.0"}
+            for d in range(30, 0, -1)
+        ]
+
+        def fake_http(url, *a, **k):
+            if "RPTA_WEB_JY_HQ" in url:
+                return {"result": {"data": nymex}}
+            return {
+                "result": {
+                    "data": [
+                        {
+                            "DIM_DATE": "2026-10-21 00:00:00",
+                            "QY_FD": -645,
+                            "CY_FD": -625,
+                        }
+                    ]
+                }
+            }
+
+        with mock.patch.object(self.fc, "_http_json", side_effect=fake_http):
+            # 今天 10-20，生效日 10-21 = 明天 → 官方分支
+            out = self.fc.build_forecast("2026-10-20")
+        self.assertEqual(out["dir"], "drop")
+        self.assertTrue(out["official"])
+        self.assertEqual(out["per_ton"], -645)
+        self.assertEqual(out["delta"]["92"], -0.51)
+        self.assertEqual(out["delta"]["95"], -0.54)
+        self.assertEqual(out["delta"]["0"], -0.53)
+
+    def test_build_forecast_qy_fd_missing_falls_back(self):
+        """公告行缺 QY_FD（异常态）：不进官方分支，估算守卫兜底返回 None。"""
+
+        def fake_http(url, *a, **k):
+            return {"result": {"data": [{"DIM_DATE": "2026-10-21 00:00:00"}]}}
+
+        with mock.patch.object(self.fc, "_http_json", side_effect=fake_http):
+            out = self.fc.build_forecast("2026-10-20")  # 生效日=明天但缺幅度
+        self.assertIsNone(out)
+
+    def test_fetch_error_raises(self):
+        """_http_json 异常时底层保留 ForecastError，build_forecast 吞掉降级为 None。"""
+        with mock.patch.object(
+            self.fc, "_http_json", side_effect=self.fc.ForecastError("网络炸了")
+        ):
+            self.assertIsNone(self.fc.build_forecast("2026-10-19"))
+            with self.assertRaises(self.fc.ForecastError):
+                self.fc.fetch_wti_closes()
+
+    def test_cache_by_day(self):
+        """同日命中缓存不重复拉行情；跨天重算；官方探针不受估算缓存挡。"""
+        kline_calls = []
+
+        def fake_http(url, *a, **k):
+            # 调价历史：生效日 10-30（非明天）→ 走估算分支；
+            # 行情需覆盖锚点（10-29）之后 ≥8 根：10-02..11-11 共 40 根
+            if "RPTA_WEB_JY_HQ" in url:
+                kline_calls.append(1)
+                dates = [f"2026-10-{d:02d}" for d in range(2, 32)] + [
+                    f"2026-11-{d:02d}" for d in range(1, 12)
+                ]
+                return {
+                    "result": {
+                        "data": [
+                            {"DATE": f"{d} 00:00:00", "CLOSE": "100.0"}
+                            for d in reversed(dates)
+                        ]
+                    }
+                }
+            return {"result": {"data": [{"DIM_DATE": "2026-10-30 00:00:00", "QY_FD": 345}]}}
+
+        with mock.patch.object(self.fc, "_http_json", side_effect=fake_http):
+            v1 = self.fc.get_today_forecast("2026-11-12")
+            v2 = self.fc.get_today_forecast("2026-11-12")  # 同日：估算命中缓存
+            self.fc.get_today_forecast("2026-11-13")  # 跨天：重算（第二次 NYMEX）
+        self.assertEqual(v1["dir"], "flat")
+        self.assertEqual(v1, v2)
+        self.assertEqual(len(kline_calls), 2)  # 每天最多拉一次 NYMEX 行情
+
+    def test_official_probe_not_blocked_by_estimate_cache(self):
+        """估算已缓存后公告才落地：官方探针现查并立即切换官方口径。"""
+        est_http_called = []
+
+        def est_http(url, *a, **k):
+            est_http_called.append(1)
+            if "RPTA_WEB_JY_HQ" in url:
+                return {
+                    "result": {
+                        "data": [
+                            {"DATE": f"2026-10-{d:02d} 00:00:00", "CLOSE": "100.0"}
+                            for d in range(30, 0, -1)
+                        ]
+                    }
+                }
+            return {"result": {"data": [{"DIM_DATE": "2026-10-30 00:00:00", "QY_FD": 345}]}}
+
+        with mock.patch.object(self.fc, "_http_json", side_effect=est_http):
+            self.fc.get_today_forecast("2026-11-12")  # 公告前：估算入缓存
+        self.assertEqual(len(est_http_called), 2)  # 调价历史 + NYMEX
+
+        # 下午公告落地：调价历史出现 生效日=明天 的行（QY_FD 已填）
+        def ann_http(url, *a, **k):
+            if "RPTA_WEB_JY_HQ" in url:
+                return {"result": {"data": []}}  # 公告后不再拉行情
+            return {
+                "result": {"data": [{"DIM_DATE": "2026-11-13 00:00:00", "QY_FD": -645}]}
+            }
+
+        with mock.patch.object(self.fc, "_http_json", side_effect=ann_http):
+            v = self.fc.get_today_forecast("2026-11-12")
+        self.assertTrue(v["official"])
+        self.assertEqual(v["per_ton"], -645)
+
+    def test_cache_failure_not_pinned(self):
+        """接口失败不缓存：同日内可重试。"""
+        calls = []
+
+        def fail_http(url, *a, **k):
+            calls.append(1)
+            raise self.fc.ForecastError("网络炸了")
+
+        with mock.patch.object(self.fc, "_http_json", side_effect=fail_http):
+            self.assertIsNone(self.fc.get_today_forecast("2026-11-12"))
+            self.assertIsNone(self.fc.get_today_forecast("2026-11-12"))
+        self.assertEqual(len(calls), 2)  # 失败不缓存，可重试
+
+
 # ======================= 文案 =======================
 
 
@@ -715,9 +937,9 @@ class TestReporting(unittest.TestCase):
                 "95": {"price": 8.62, "change": -0.05, "pct": None},
                 "98": {"price": 9.98, "change": 0.0, "pct": None},
             },
-            "next_change_time": (
-                datetime.now().date() + timedelta(days=5)
-            ).strftime("%Y%m%d"),
+            "next_change_time": (datetime.now().date() + timedelta(days=5)).strftime(
+                "%Y%m%d"
+            ),
         }
         text = reporting.build_text_report(
             "江苏", data, fuels=["92", "95", "98"], alarm=False
@@ -737,9 +959,9 @@ class TestReporting(unittest.TestCase):
                 "95": {"price": 9.12, "change": 0.0, "pct": None},
                 "98": {"price": 11.19, "change": 0.0, "pct": None},
             },
-            "next_change_time": (
-                datetime.now().date() + timedelta(days=5)
-            ).strftime("%Y%m%d"),
+            "next_change_time": (datetime.now().date() + timedelta(days=5)).strftime(
+                "%Y%m%d"
+            ),
         }
         text = reporting.build_text_report("江苏", flat, fuels=["92"], alarm=False)
         self.assertIn("💡", text)
@@ -759,10 +981,13 @@ class TestReporting(unittest.TestCase):
         text = reporting.build_remind_text(rows, fuels=["92", "95"])
         self.assertIn("调价提醒", text)
         self.assertIn("调价窗口", text)
-        self.assertIn("92号汽油：8.09 元/升", text)
+        self.assertIn("92号汽油：现价 8.09 元/升", text)
         self.assertIn("95号汽油", text)
         self.assertNotIn("98号", text)  # fuels 过滤
         self.assertNotIn("江苏 92号", text)  # 单省不加前缀
+        # 兜底（无预测）不带任何涨跌标注——上次调价的涨跌额不得冒充下次调整
+        self.assertNotIn("↑涨", text)
+        self.assertNotIn("↓降", text)
 
         multi = reporting.build_remind_text(
             [("江苏", fake_price_data(8.09)), ("上海", fake_price_data(8.05))],
@@ -777,6 +1002,114 @@ class TestReporting(unittest.TestCase):
         self.assertEqual(
             reporting.build_remind_text([("江苏", no_window)], fuels=["92"]), ""
         )
+
+    def test_oil1008_countdown_direction_variants(self):
+        """倒计时建议按预测方向分型：涨=赶油，降=等降价，未知/搁浅=中性。"""
+        t = reporting.adjust_countdown_text
+        d = datetime.now().date()
+        eff1 = (d + timedelta(days=2)).strftime("%Y%m%d")  # 生效日=后天 → 明晚窗口
+        eff0 = (d + timedelta(days=1)).strftime("%Y%m%d")  # 生效日=明天 → 今晚窗口
+        eff7 = (d + timedelta(days=8)).strftime("%Y%m%d")  # 窗口还有 7 天
+        self.assertEqual(t(eff1, "rise"), "明晚 24 时调价窗口开启！要加油的今晚抓紧")
+        self.assertEqual(
+            t(eff1, "drop"),
+            "明晚 24 时调价窗口开启！预计降价，等明晚降价后再加更划算",
+        )
+        self.assertEqual(t(eff1, None), "明晚 24 时调价窗口开启")
+        self.assertEqual(t(eff1, "flat"), "明晚 24 时调价窗口开启")
+        self.assertEqual(
+            t(eff0, "drop"),
+            "就是今晚 24 时调价窗口开启！预计降价，明天起加油更划算",
+        )
+        self.assertEqual(
+            t(eff0, "rise"),
+            "就是今晚 24 时调价窗口开启！要加油的今晚抓紧",
+        )
+        self.assertEqual(t(eff0, None), "就是今晚 24 时！调价窗口开启")
+        # days>1 与无窗口不受方向影响
+        self.assertIn("还有 7 天", t(eff7, "drop"))
+        self.assertEqual(t("", "rise"), "")
+
+    def test_oil1008_remind_text_with_forecast(self):
+        """带预测的调价提醒：价格行预测标注 + 每吨摘要行 + 方向建议。"""
+        d = datetime.now().date()
+        eff1 = (d + timedelta(days=2)).strftime("%Y%m%d")  # 生效日=后天 → 明晚窗口
+        fc = {
+            "dir": "drop",
+            "rate": -9.36,
+            "per_ton": -382,
+            "delta": {"92": -0.3, "95": -0.32, "98": -0.32, "0": -0.33, "89": -0.3},
+        }
+        row = fake_price_data(8.85)
+        row["next_change_time"] = eff1
+        text = reporting.build_remind_text([("江苏", row)], fuels=["92", "0"], forecast=fc)
+        self.assertIn("明晚 24 时调价窗口开启！预计降价", text)
+        self.assertIn("92号汽油：现价 8.85 元/升（预计 ↓降约 0.30）", text)
+        self.assertIn("0号柴油：现价 7.71 元/升（预计 ↓降约 0.33）", text)
+        self.assertIn("⚡ 预计每吨下调约 382 元，以发改委公告为准", text)
+        self.assertNotIn("↑涨", text)
+
+        rise = reporting.build_remind_text(
+            [("江苏", row)],
+            fuels=["92"],
+            forecast={"dir": "rise", "per_ton": 120, "delta": {"92": 0.09}},
+        )
+        self.assertIn("要加油的今晚抓紧", rise)
+        self.assertIn("（预计 ↑涨约 0.09）", rise)
+        self.assertIn("⚡ 预计每吨上调约 120 元", rise)
+
+        flat = reporting.build_remind_text(
+            [("江苏", row)],
+            fuels=["92"],
+            forecast={"dir": "flat", "per_ton": 20, "delta": {"92": 0.02}},
+        )
+        self.assertIn("92号汽油：现价 8.85 元/升\n", flat)  # 搁浅不标涨跌
+        self.assertNotIn("预计 ↑涨", flat)
+        self.assertNotIn("预计 ↓降", flat)
+        self.assertIn("大概率搁浅维持现价", flat)
+
+    def test_oil1008_remind_text_multi_forecast(self):
+        """多省带预测：价格行省份前缀 + 单条每吨摘要行。"""
+        fc = {"dir": "drop", "per_ton": -280, "delta": {"92": -0.22}}
+        multi = reporting.build_remind_text(
+            [("江苏", fake_price_data(8.85)), ("上海", fake_price_data(8.05))],
+            fuels=["92"],
+            forecast=fc,
+        )
+        self.assertIn("江苏 92号汽油：现价 8.85 元/升（预计 ↓降约 0.22）", multi)
+        self.assertIn("上海 92号汽油：现价 8.05 元/升（预计 ↓降约 0.22）", multi)
+        self.assertEqual(multi.count("以发改委公告为准"), 1)
+
+    def test_oil1008_remind_text_no_delta_keeps_price_only(self):
+        """预测 dict 里该油号缺 delta 键：该行退化为仅现价，不报错。"""
+        fc = {"dir": "drop", "per_ton": -280, "delta": {}}
+        text = reporting.build_remind_text(
+            [("江苏", fake_price_data(8.85))], fuels=["92"], forecast=fc
+        )
+        self.assertIn("92号汽油：现价 8.85 元/升\n", text)
+        self.assertIn("以发改委公告为准", text)
+
+    def test_oil1008_remind_text_official(self):
+        """官方公告（生效日=明天，今晚 24 时落地）：直接用官方数，措辞不带「预计」。"""
+        fc = {
+            "dir": "drop",
+            "per_ton": -645,
+            "delta": {"92": -0.51, "95": -0.54, "98": -0.54, "0": -0.53},
+            "official": True,
+        }
+        d = datetime.now().date()
+        eff0 = (d + timedelta(days=1)).strftime("%Y%m%d")  # 生效日=明天 → 今晚窗口
+        row = fake_price_data(8.85)
+        row["next_change_time"] = eff0
+        text = reporting.build_remind_text([("江苏", row)], fuels=["92", "95"], forecast=fc)
+        self.assertIn("就是今晚 24 时调价窗口开启！已公告降价", text)
+        self.assertIn("92号汽油：现价 8.85 元/升（↓降 0.51）", text)
+        self.assertIn("95号汽油：现价 8.62 元/升（↓降 0.54）", text)
+        self.assertIn("⚡ 官方公告：本轮每吨下调 645 元，今晚 24 时起执行", text)
+        self.assertNotIn("预计", text)  # 官方口径全篇不带「预计」
+
+
+# ======================= 渲染（TC-F01~F09） =======================
 
 
 # ======================= 渲染（TC-F01~F09） =======================
@@ -941,6 +1274,28 @@ class TestGenImage(unittest.TestCase):
         self.assertIn("第1行", prompt)
         self.assertIn("第2行", prompt)
         self.assertIn("无油价数据区", prompt)  # 无价格行时不画空面板
+
+    def test_oil1008_prompt_forecast_pill_and_notice(self):
+        """oil_1008：预测标注进数据行胶囊，「预计 ↓降约 X」绿色胶囊；每吨摘要进提示区。"""
+        from astrbot_plugin_oil_price.modules import genimage
+
+        text = (
+            "🚨🚨 调价提醒 🚨🚨\n"
+            "⛽ 江苏：明晚 24 时调价窗口开启！预计降价，等明晚降价后再加更划算\n"
+            "92号汽油：现价 8.85 元/升（预计 ↓降约 0.30）\n"
+            "0号柴油：现价 7.71 元/升（预计 ↓降约 0.33）\n"
+            "⚡ 预计每吨下调约 382 元，以发改委公告为准"
+        )
+        prompt = genimage.prompt_from_text(text)
+        self.assertIn("92号汽油：现价 8.85 元/升", prompt)
+        self.assertIn("「预计 ↓降约 0.30」", prompt)  # 预测胶囊原文进提示词
+        self.assertIn("绿色圆角小胶囊", prompt)
+        self.assertIn("第1行", prompt)
+        self.assertIn("第2行", prompt)
+        self.assertIn("2 行油价数据", prompt)  # 预测行归数据面板
+        self.assertIn("⚡ 预计每吨下调约 382 元，以发改委公告为准", prompt)
+        self.assertIn("4. 提示区", prompt)  # 每吨摘要归提示区
+        self.assertIn("若含「下调」，用绿色加粗放大突出", prompt)
 
     def test_endpoints_from_provider_config(self):
         from astrbot_plugin_oil_price.modules import genimage
@@ -1180,12 +1535,18 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.gen_patcher = mock.patch.object(
             plugin_main.genimage, "generate", _fake_genimage_generate
         )
+        # 调价预测统一打桩：默认无预测（中性文案）；预测内容用例自行覆盖
+        self.fc_patcher = mock.patch.object(
+            plugin_main.forecast, "get_today_forecast", side_effect=lambda today: None
+        )
         self.fetch_patcher.start()
         self.gen_patcher.start()
+        self.fc_patcher.start()
 
     async def asyncTearDown(self):
         self.fetch_patcher.stop()
         self.gen_patcher.stop()
+        self.fc_patcher.stop()
         for t in self.plugin._tasks:
             t.cancel()
 
@@ -1303,9 +1664,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
     async def test_oil1007_today_poster_neutral(self):
         """/今日油价 海报文案走中性播报（oil_1007）：提示词不含警报标题与 ⚡。"""
         seen = {}
-        with mock.patch.object(
-            plugin_main.genimage, "generate", self._capturing_gen(seen)
-        ):
+        with mock.patch.object(plugin_main.genimage, "generate", self._capturing_gen(seen)):
             out = await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
         self.assertEqual(out[-1]["type"], "chain")
         prompt = seen["prompt"]
@@ -1328,9 +1687,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
     async def test_oil1007_push_keeps_alarm(self):
         """同样涨跌数据走推送路径：仍带「油价上涨提醒」警报标题与 ⚡ 提示。"""
         seen = {}
-        with mock.patch.object(
-            plugin_main.genimage, "generate", self._capturing_gen(seen)
-        ):
+        with mock.patch.object(plugin_main.genimage, "generate", self._capturing_gen(seen)):
             await self.plugin._push_report(
                 [("广东", fake_price_data())], ["default:GroupMessage:10001"]
             )
@@ -1462,8 +1819,8 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         """单省调价提醒的文字消息：倒计时 + 当前油价明细。"""
         self.cfg["basic"]["change_remind_days"] = 1
         with mock.patch.object(
-            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
-        ):
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(2)
+        ):  # 生效日=后天 → 剩余 1 天（窗口日 days=0 归官方公告推送）
             rows = await self.plugin._collect_today(["江苏"])
             await self.plugin._advance_remind(rows)
         plains = [
@@ -1475,7 +1832,8 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         text = "\n".join(plains)
         self.assertIn("调价提醒", text)
         self.assertIn("调价窗口", text)
-        self.assertIn("92号汽油：8.09 元/升", text)
+        self.assertIn("92号汽油：现价 8.09 元/升", text)
+        self.assertNotIn("↑涨", text)  # 无预测兜底不带上次调价涨跌标注
 
     async def test_oil1003_remind_multi_prompt_includes_prices(self):
         """多省调价提醒（仅图片）：海报提示词含带省份前缀的价格行。"""
@@ -1488,7 +1846,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch.object(
-                plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+                plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(2)
             ),
             mock.patch.object(plugin_main.genimage, "generate", fake),
         ):
@@ -1500,6 +1858,137 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("上海 92号汽油：", prompts[0])
         # 文字消息与海报同源：多省预告只发图，原文进「播报原文（核对用）」段
         self.assertIn("【播报原文（核对用）】", prompts[0])
+
+    async def test_oil1008_remind_single_with_forecast(self):
+        """带预测的单省调价提醒：价格行预测标注 + 每吨摘要 + 方向建议。"""
+        self.cfg["basic"]["change_remind_days"] = 1
+        fc = {
+            "dir": "drop",
+            "rate": -5.6,
+            "per_ton": -280,
+            "delta": {"92": -0.22, "95": -0.24, "98": -0.24, "0": -0.24, "89": -0.22},
+        }
+        with mock.patch.object(plugin_main.forecast, "get_today_forecast", return_value=fc):
+            with mock.patch.object(
+                plugin_main.datasource,
+                "fetch_province",
+                side_effect=fetch_with_window(2),
+            ):
+                rows = await self.plugin._collect_today(["江苏"])
+                await self.plugin._advance_remind(rows)
+        plains = [
+            p.text
+            for _, mc in self.ctx.sent_messages
+            for p in mc.chain
+            if type(p).__name__.endswith("Plain")
+        ]
+        text = "\n".join(plains)
+        self.assertIn("预计降价，等明晚降价后再加更划算", text)
+        self.assertIn("92号汽油：现价 8.09 元/升（预计 ↓降约 0.22）", text)
+        self.assertIn("⚡ 预计每吨下调约 280 元，以发改委公告为准", text)
+        self.assertNotIn("↑涨", text)
+
+    async def test_oil1008_adjust_window_cmd_forecast(self):
+        """/调价窗口 追加预测摘要行；预测不可用时保持原输出。"""
+        fc = {
+            "dir": "drop",
+            "rate": -5.6,
+            "per_ton": -280,
+            "delta": {"92": -0.22},
+        }
+        ev = MockEvent()
+        with mock.patch.object(plugin_main.forecast, "get_today_forecast", return_value=fc):
+            out = await run_cmd(self.plugin.adjust_window_cmd(ev))
+        self.assertIn("📅", out[0]["text"])
+        self.assertIn(
+            "⚡ 预计每吨下调约 280 元（92号约 0.22 元/升），以发改委公告为准",
+            out[0]["text"],
+        )
+
+        # 预测为 None：不追加预测行，倒计时照常
+        ev2 = MockEvent()
+        out2 = await run_cmd(self.plugin.adjust_window_cmd(ev2))
+        self.assertIn("📅", out2[0]["text"])
+        self.assertNotIn("⚡", out2[0]["text"])
+
+    async def test_oil1008_advance_remind_skips_window_day(self):
+        """窗口日（剩余 0 天）不发推算预告：当天由官方公告推送接管。"""
+        self.cfg["basic"]["change_remind_days"] = 1
+        with mock.patch.object(
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+        ):
+            rows = await self.plugin._collect_today(["江苏"])
+            await self.plugin._advance_remind(rows)
+        self.assertEqual(len(self.ctx.sent_messages), 0)
+
+    async def test_oil1008_announce_gate(self):
+        """官方公告轮询闸门：16:30~22:59 且整 10 分位才探测。"""
+        g = plugin_main.OilPricePlugin._announce_gate
+        self.assertTrue(g(datetime(2026, 11, 12, 16, 30)))
+        self.assertTrue(g(datetime(2026, 11, 12, 17, 0)))
+        self.assertTrue(g(datetime(2026, 11, 12, 22, 50)))
+        self.assertFalse(g(datetime(2026, 11, 12, 16, 20)))  # 16:30 前
+        self.assertFalse(g(datetime(2026, 11, 12, 16, 33)))  # 非 10 分位
+        self.assertFalse(g(datetime(2026, 11, 12, 23, 0)))  # 23 点起停
+        self.assertFalse(g(datetime(2026, 11, 12, 8, 30)))  # 早晨不轮询
+
+    async def test_oil1008_official_announce_push(self):
+        """窗口日官方公告推送：公告落地推官方口径并当日去重；
+        未落地不发；21 点仍未见公告回退推算口径（保证当天有一推）。"""
+        self.cfg["basic"]["change_remind_days"] = 1
+        self.cfg["basic"]["provinces"] = ["江苏"]
+        off_fc = {"dir": "drop", "per_ton": -645, "delta": {"92": -0.51}, "official": True}
+        est_fc = {"dir": "drop", "per_ton": -530, "delta": {"92": -0.42}}
+        # 窗口日 rows（生效日=明天 → 剩余 0 天）
+        win1 = fetch_with_window(1)
+
+        def plains():
+            return [
+                p.text
+                for _, mc in self.ctx.sent_messages
+                for p in mc.chain
+                if type(p).__name__.endswith("Plain")
+            ]
+
+        with mock.patch.object(plugin_main.datasource, "fetch_province", side_effect=win1):
+            # ① 17:00 公告未落地（仅估算）→ 不发，等下一个轮询点
+            with mock.patch.object(
+                plugin_main.forecast, "get_today_forecast", return_value=dict(est_fc)
+            ):
+                await self.plugin._official_announce_push(datetime(2026, 11, 12, 17, 0))
+            self.assertEqual(len(self.ctx.sent_messages), 0)
+
+            # ② 17:10 公告落地（官方 fc）→ 官方口径
+            with mock.patch.object(
+                plugin_main.forecast, "get_today_forecast", return_value=dict(off_fc)
+            ):
+                await self.plugin._official_announce_push(datetime(2026, 11, 12, 17, 10))
+            text = "\n".join(plains())
+            self.assertIn("官方公告：本轮每吨下调 645 元，今晚 24 时起执行", text)
+            self.assertIn("（↓降 0.51）", text)
+            self.assertNotIn("预计", text)
+            n_msgs = len(self.ctx.sent_messages)
+            n_plains = len(plains())
+
+            # ③ 同日去重：已发过不再重发
+            with mock.patch.object(
+                plugin_main.forecast, "get_today_forecast", return_value=dict(off_fc)
+            ):
+                await self.plugin._official_announce_push(datetime(2026, 11, 12, 17, 20))
+            self.assertEqual(len(self.ctx.sent_messages), n_msgs)
+
+            # ④ 21:10 公告仍未落地（数据源异常）→ 回退推算口径，保证当天有一推
+            st = self.plugin._load_push_state()
+            st["official_done"] = {}  # 清去重重试
+            self.plugin._save_push_state(st)
+            with mock.patch.object(
+                plugin_main.forecast, "get_today_forecast", return_value=dict(est_fc)
+            ):
+                await self.plugin._official_announce_push(datetime(2026, 11, 12, 21, 10))
+            text = "\n".join(plains()[n_plains:])
+            self.assertIn("预计降价", text)  # days=0 估算措辞
+            self.assertIn("预计每吨下调约 530 元，以发改委公告为准", text)
+            self.assertNotIn("官方公告：本轮", text)
 
     async def test_a07_look_hit(self):
         ev = MockEvent()
@@ -1748,7 +2237,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(self.ctx.sent_messages), 0)
         self.cfg["basic"]["change_remind_days"] = 1
         with mock.patch.object(
-            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(2)
         ):
             h = self.plugin.store.history()  # 清当日缓存，拿到新窗口日期
             h["江苏"].pop(self.plugin.store.today(), None)
@@ -1802,13 +2291,14 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             # (freq, remind_days, window_days, expect_msgs)
             ("daily", 0, 5, 1),  # 仅常规卡片
             ("daily", 1, 5, 1),  # 窗口远：无预告
-            ("daily", 1, 1, 2),  # 窗口明天：卡片 + 独立预告（多省卡片无倒计时）
+            ("daily", 1, 2, 2),  # 窗口剩 1 天：卡片 + 推算预告（多省卡片无倒计时）
             ("daily", 3, 3, 2),  # 剩余 3 ≤ N=3：卡片 + 预告
+            ("daily", 1, 1, 1),  # 窗口日（剩 0 天）：预告不发，官方公告推送接管
             ("weekly", 0, 1, 0),  # 非每周推送日：静默
-            ("weekly", 1, 1, 1),  # 非推送日但调价提醒独立生效
+            ("weekly", 1, 1, 0),  # 非推送日且窗口日：预告不发（官方公告推送接管）
             ("off", 0, 1, 0),  # 全关：完全静默
             ("off", 1, 5, 0),  # off 且窗口远：静默（复刻 on_change 平日行为）
-            ("off", 1, 1, 1),  # off + 窗口明天：仅预告
+            ("off", 1, 1, 0),  # off + 窗口日：预告不发（官方公告推送接管）
         ]
         for freq, remind, window, expect in cases:
             with self.subTest(freq=freq, remind=remind, window=window):
@@ -1955,11 +2445,11 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         st["remind_done"] = {"旧省集": "2026-10-01"}
         self.plugin._save_push_state(st)
         with mock.patch.object(
-            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
+            plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(2)
         ):
             await self.plugin._push_round(
                 datetime.now()
-            )  # 预告触发，remind_done 写入当前集
+            )  # 预告触发（剩余 1 天），remind_done 写入当前集
         st2 = self.plugin._load_push_state()
         self.assertEqual(set(st2.get("price_snaps")), {"江苏、上海"})
         self.assertEqual(set(st2.get("remind_done")), {"江苏、上海"})

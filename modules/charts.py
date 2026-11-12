@@ -33,7 +33,7 @@ from .constants import (
     PALETTE,
     PALETTE_LIGHT,
 )
-from .reporting import _days_until, rise_hint_text
+from .reporting import _days_until, adjust_countdown_text, rise_hint_text
 
 SCALE = 2  # 卡片与折线图超采样倍率（抗锯齿）
 
@@ -1008,13 +1008,15 @@ def render_report_card(
     fuels: list = None,
     style_idx: int = None,
     bg_path: str = None,
+    direction: str = None,
 ) -> str:
     """单省海报卡（参照参考图版式）：
 
     通栏笔刷标题带（警灯图标 + 双色描边大字）→ 白色内容面板（省份头 + 油号色块行 +
     大字价格 + 涨跌胶囊）→ 黄色横幅（油种上调）→ 红色笔刷条（赶油提示）→
     深色倒计时条（日历图标 + 大数字）→ 底部波浪。
-    样式按周轮换；style_idx 可强制指定；bg_path 提供 AI 插画背景时叠加其上。
+    样式按周轮换；style_idx 可强制指定；bg_path 提供 AI 插画背景时叠加其上；
+    direction 传入下次调价预测方向，days≤1 的倒计时建议行随之分向（oil_1008）。
     """
     st = STYLES[3] if bg_path else _style(style_idx)  # AI 背景固定配天空蓝版式
     all_fuels = data.get("fuels") or {}
@@ -1341,11 +1343,7 @@ def render_report_card(
                 fill=st["count_fg"],
             )
         else:
-            line = (
-                "明晚 24 时调价，今晚加油还按现价！"
-                if days == 1
-                else "就是今晚 24 时调价窗口！"
-            )
+            line = adjust_countdown_text(data.get("next_change_time") or "", direction)
             d.text(
                 (sw(ML + 96), sw(cy - f_count.size // 2 - 4)),
                 line,
@@ -1378,9 +1376,17 @@ def render_report_card(
 
 
 def render_multi_card(
-    rows: list, today: str, tmp_dir: str, fuels: list = None, style_idx: int = None
+    rows: list,
+    today: str,
+    tmp_dir: str,
+    fuels: list = None,
+    style_idx: int = None,
+    direction: str = None,
 ) -> str:
-    """多省速览海报长图：通栏标题带 + 每省一个白面板（省份头 + 油种横排），样式按周轮换。"""
+    """多省速览海报长图：通栏标题带 + 每省一个白面板（省份头 + 油种横排），样式按周轮换。
+
+    direction 传入下次调价预测方向，days≤1 的倒计时建议行随之分向（oil_1008）。
+    """
     st = _style(style_idx)
     seed = _style_index() if style_idx is None else style_idx
     W, ML = 900, 36
@@ -1462,10 +1468,8 @@ def render_multi_card(
                 fill=st["count_hi"],
             )
         else:
-            line = (
-                "明晚 24 时调价，今晚加油还按现价！"
-                if days == 1
-                else "就是今晚 24 时调价窗口！"
+            line = adjust_countdown_text(
+                (rows[0][1] if rows else {}).get("next_change_time") or "", direction
             )
             d.text(
                 (sw(ML + 96), sw(cy - f_count.size // 2 - 4)),

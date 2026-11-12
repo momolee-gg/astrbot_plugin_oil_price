@@ -20,7 +20,10 @@ SIZE = "864x1152"
 _DASHSCOPE_NATIVE = "/api/v1/services/aigc/multimodal-generation/generation"
 
 # 单油号数据行尾部涨幅，如「92号汽油：8.58 元/升（↑涨 0.32）」→ (主体, ↑涨 0.32)
-_ROW_CHANGE_RE = re.compile(r"^(?P<main>.*元/升)\s*[（(](?P<chg>[↑↓][^（）()]*)[)）]\s*$")
+# 价格行尾胶囊：支持「（↑涨 0.27）」与预测标注「（预计 ↓降约 0.29）」（oil_1008）
+_ROW_CHANGE_RE = re.compile(
+    r"^(?P<main>.*元/升)\s*[（(](?P<chg>(?:预计\s*)?[↑↓][^（）()]*)[)）]\s*$"
+)
 
 
 class GenImageError(RuntimeError):
@@ -147,7 +150,7 @@ def prompt_from_text(text: str, style: str = "") -> str:
             m = _ROW_CHANGE_RE.match(row)
             if m:
                 chg = m.group("chg").strip()
-                pill = "红色" if chg.startswith("↑") else "绿色"
+                pill = "红色" if "↑" in chg else "绿色"
                 spec.append(
                     f"   第{i}行「{m.group('main').strip()}」，"
                     f"行尾画一个醒目的{pill}圆角小胶囊，胶囊内白字「{chg}」"

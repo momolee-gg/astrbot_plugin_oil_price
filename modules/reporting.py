@@ -61,16 +61,32 @@ def days_until(next_time: str) -> tuple:
     return _days_until(next_time)
 
 
-def adjust_countdown_text(next_time: str) -> str:
-    """不含换行的调价倒计时短句，无窗口时返回空串。"""
+def adjust_countdown_text(next_time: str, direction: str = None, official=False) -> str:
+    """不含换行的调价倒计时短句，无窗口时返回空串。
+
+    direction: 下次调价预测方向（"rise"/"drop"/"flat"，None=未知），
+    仅 days≤1 的建议行分向：涨价提醒赶在涨价前加满，降价提醒等降价，
+    未知/搁浅保持中性——不再默认按涨价场景建议（oil_1008）。
+    official=True（官方公告已出）时「预计」改「已公告」。
+    """
     days, d_str = _days_until(next_time)
     if days is None:
         return ""
     if days > 1:
         return f"距下次调价窗口（{d_str} 24时）还有 {days} 天"
     if days == 1:
-        return "明晚 24 时调价窗口开启！要加油的今晚抓紧"
+        if direction == "rise":
+            return "明晚 24 时调价窗口开启！要加油的今晚抓紧"
+        if direction == "drop":
+            word = "已公告降价" if official else "预计降价"
+            return f"明晚 24 时调价窗口开启！{word}，等明晚降价后再加更划算"
+        return "明晚 24 时调价窗口开启"
     if days == 0:
+        if direction == "rise":
+            return "就是今晚 24 时调价窗口开启！要加油的今晚抓紧"
+        if direction == "drop":
+            word = "已公告降价" if official else "预计降价"
+            return f"就是今晚 24 时调价窗口开启！{word}，明天起加油更划算"
         return "就是今晚 24 时！调价窗口开启"
     return ""
 
@@ -101,19 +117,64 @@ def drop_hint_text(next_time: str) -> str:
     return "本轮降幅已生效，今天起加油更省钱！"
 
 
-def build_remind_text(rows: list, fuels: list = None) -> str:
-    """调价提醒全文（oil_1003）：每省倒计时 + 当前油价明细。
+def _remind_fuel_line(
+    fuel: str, entry: dict, delta: float = None, official: bool = False
+) -> str:
+    """提醒价格行：现价 + 下次调价标注（oil_1008）。
+
+    delta 为下次调价每升调整额（带符号）。官方公告时标「↓降 0.51」，
+    测算时标「预计 ↓降约 0.51」；无预测或搁浅（delta 为 None/0）只报现价
+    ——提醒语境下绝不能再把上一次调价的涨跌额（数据源 change 字段）
+    挂出来冒充下次调整。
+    """
+    name = FUEL_NAMES.get(fuel, fuel + "号")
+    price = entry["price"]
+    if not delta:
+        return f"{name}：现价 {price:g} 元/升"
+    arrow = "↑涨" if delta > 0 else "↓降"
+    if official:
+        return f"{name}：现价 {price:g} 元/升（{arrow} {abs(delta):.2f}）"
+    return f"{name}：现价 {price:g} 元/升（预计 {arrow}约 {abs(delta):.2f}）"
+
+
+def _forecast_notice(forecast: dict) -> str:
+    """预测摘要行（进海报提示区）：只写元/吨口径，避免含「元/升」
+    被 genimage 行分类误归入数据面板。"""
+    direction = forecast.get("dir")
+    if direction == "flat":
+        # 50 元/吨与 forecast.FLAT_THRESHOLD 同源：搁浅线
+        return "⚡ 预计本轮调价幅度不足 50 元/吨，大概率搁浅维持现价（以发改委公告为准）"
+    word = "上调" if direction == "rise" else "下调"
+    if forecast.get("official"):
+        return f"⚡ 官方公告：本轮每吨{word} {abs(int(forecast.get('per_ton') or 0))} 元，今晚 24 时起执行"
+    return (
+        f"⚡ 预计每吨{word}约 {abs(int(forecast.get('per_ton') or 0))} 元，以发改委公告为准"
+    )
+
+
+def build_remind_text(rows: list, fuels: list = None, forecast: dict = None) -> str:
+    """调价提醒全文（oil_1003；oil_1008 改为下次调价预警）。
 
     行结构同时服务两个消费者：QQ 文字消息直接阅读；AI 海报提示词按行
     分类（含「元/升」进数据面板、含「调价窗口」进倒计时区）。多省时
     价格行带省份前缀，海报上不致混淆归属。
-    rows: [(prov, data), ...]；无任何倒计时行时返回空串（调用方不发）。
+    rows: [(prov, data), ...]；forecast: forecast.estimate()/官方公告结构（可
+    None，None 时只报现价、方向中性，不带任何涨跌标注）。
+    无任何倒计时行时返回空串（调用方不发）。
     """
     show = [f for f in (fuels or FUEL_ORDER)]
     lines = ["🚨🚨 调价提醒 🚨🚨"]
+    direction = (forecast or {}).get("dir")
+    official = bool((forecast or {}).get("official"))
+    # 搁浅/未知方向不给价格行加标注（delta 只在明确涨/跌时展示）
+    delta = (forecast or {}).get("delta") or {}
+    if direction not in ("rise", "drop"):
+        delta = {}
     multi = len(rows) > 1
     for prov, data in rows:
-        line = adjust_countdown_text(data.get("next_change_time") or "")
+        line = adjust_countdown_text(
+            data.get("next_change_time") or "", direction, official
+        )
         if not line:
             continue
         lines.append(f"⛽ {prov}：{line}")
@@ -124,7 +185,11 @@ def build_remind_text(rows: list, fuels: list = None) -> str:
             if not entry:
                 continue
             prefix = f"{prov} " if multi else ""
-            lines.append(f"{prefix}{fuel_line(fuel, entry)}")
+            lines.append(
+                f"{prefix}{_remind_fuel_line(fuel, entry, delta.get(fuel), official)}"
+            )
+    if forecast and len(lines) > 1:
+        lines.append(_forecast_notice(forecast))
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
