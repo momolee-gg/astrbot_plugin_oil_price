@@ -48,27 +48,27 @@
         "hint": "每日定时推送与 /今日油价 缺省时使用的省份列表，可多选；多省推送合成为一张长图"
       },
       "push_hour": {
-        "description": "⏰ 每日推送时间（小时）",
+        "description": "⏰ 默认推送时间（小时）",
         "type": "int",
         "default": 9
       },
       "push_minute": {
-        "description": "⏱️ 每日推送时间（分钟）",
+        "description": "⏱️ 默认推送时间（分钟）",
         "type": "int",
         "default": 0
       },
       "push_frequency": {
-        "description": "🔁 推送频率（daily=每日 / weekly=每周 / off=关闭）",
+        "description": "🔁 默认推送频率（daily=每日 / weekly=每周 / off=关闭）",
         "type": "string",
         "options": ["daily", "weekly", "off"],
         "default": "daily",
-        "hint": "每日=每天到点推送；每周=仅每周推送日推送；关闭=不发常规推送，调价提醒与月度图照常"
+        "hint": "全局默认调度，目标行未单独设置时使用；每日=每天到点推送；每周=仅每周推送日推送；关闭=不发常规推送，调价提醒与月度图照常"
       },
       "push_weekday": {
-        "description": "📅 每周推送日（0=周一 … 6=周日）",
+        "description": "📅 默认每周推送日（0=周一 … 6=周日）",
         "type": "int",
         "default": 0,
-        "hint": "push_frequency=weekly 时生效"
+        "hint": "push_frequency=weekly 且目标行未单独设置频率时使用"
       },
       "change_remind_days": {
         "description": "🔔 调价提醒（0=关闭）",
@@ -106,6 +106,38 @@
         "default": [],
         "hint": "UMO 格式：平台:消息类型:群号，可多个"
       },
+      "notify_private": {
+        "description": "👤 私聊推送目标（已废弃，由通用目标列表取代）",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "readonly": true,
+        "hint": "v1.5 起改用 push_private_targets 通用目标行（支持任意平台目标串）；此键仅保留避免旧配置报错，不再读取"
+      },
+      "notify_group": {
+        "description": "👥 群聊推送目标（已废弃，由通用目标列表取代）",
+        "type": "list",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "readonly": true,
+        "hint": "v1.5 起改用 push_group_targets 通用目标行（支持任意平台目标串）；此键仅保留避免旧配置报错，不再读取"
+      },
+      "push_group_targets": {
+        "description": "👥 群聊推送目标（任意平台，通用格式）",
+        "type": "list",
+        "default": [],
+        "hint": "行结构 {id, frequency, time, limit}，由「油价设置」页维护：id 支持 QQ群号（纯数字）/完整UMO/飞书群webhook（地址##加签密钥）/飞书chat_id（oc_）；frequency 留空=跟随默认，可填 daily / weekly:0~6 / off；time 留空=跟随默认，格式 HH:MM；limit 为该群每日查询上限（仅 QQ 类目标参与计量）"
+      },
+      "push_private_targets": {
+        "description": "👤 个人推送目标（任意平台，通用格式）",
+        "type": "list",
+        "default": [],
+        "hint": "行结构 {id, frequency, time, limit}，由「油价设置」页维护：id 支持 QQ号（纯数字）/完整UMO/飞书 ou_ /手机号/邮箱；调度字段语义同群聊列表"
+      },
       "user_daily_limit": {
         "description": "🔢 每人每日查询上限",
         "type": "int",
@@ -131,10 +163,11 @@
         "hint": "卡片展示与 看看油价/我要加油 缺省的油号，可多选"
       },
       "target_limits": {
-        "description": "🎯 目标单独限额（UMO→每日上限）",
+        "description": "🎯 目标单独限额（已废弃，由通用目标行 limit 字段取代）",
         "type": "dict",
         "default": {},
-        "hint": "每个推送目标的单独每日查询上限；未设置的目标使用全局默认。由「油价设置」页维护"
+        "readonly": true,
+        "hint": "v1.5 起限额改在通用目标行的 limit 字段配置；此键仅保留避免旧配置报错，不再读取。由「油价设置」页维护"
       }
     }
   },
@@ -173,6 +206,18 @@
         "type": "bool",
         "default": true,
         "hint": "同一天相同内容的海报只真实生成一次，重复查询/推送直接复用已有图片（秒回、省生图费用）；关闭后每次都真实生成"
+      },
+      "feishu_app_id": {
+        "description": "🕊️ 飞书自建应用 App ID",
+        "type": "string",
+        "default": "",
+        "hint": "飞书开放平台创建企业自建应用后获取；与 App Secret 成对填写后，个人/群目标与海报图片推送才可用"
+      },
+      "feishu_app_secret": {
+        "description": "🔐 飞书自建应用 App Secret",
+        "type": "string",
+        "default": "",
+        "hint": "与 App ID 成对填写；应用需开通「获取与发送单聊、群组消息」权限（im:message），用手机号/邮箱定位用户还需「根据手机号或邮箱获取用户 ID」权限，并发布应用版本"
       }
     }
   }

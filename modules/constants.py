@@ -8,6 +8,7 @@ DATASOURCE = "万维ShowAPI"
 REGISTER_URL = "https://www.showapi.com/"
 
 # ---- 推送目标（UMO 码值） ----
+# 纯数字 QQ 号/群号补前缀用（通用目标行 oil_1010：其他平台填完整 UMO 或飞书目标串）
 TARGET_PLATFORM = "default"
 PRIVATE_TARGET_PREFIX = "default:FriendMessage:"
 GROUP_TARGET_PREFIX = "default:GroupMessage:"

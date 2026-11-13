@@ -34,7 +34,14 @@ TEST_ROOT = "/tmp/oil_plugin_test"
 from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot_plugin_oil_price import main as plugin_main
 from astrbot_plugin_oil_price.config import Prefs
-from astrbot_plugin_oil_price.modules import charts, datasource, reporting
+from astrbot_plugin_oil_price.modules import (
+    charts,
+    datasource,
+    feishu,
+    netguard,
+    pushtarget,
+    reporting,
+)
 from astrbot_plugin_oil_price.modules.constants import PROVINCES
 from astrbot_plugin_oil_price.modules.storage import Store
 
@@ -118,9 +125,10 @@ def base_config(appkey="test-key-123"):
             "push_hour": 9,
             "push_minute": 0,
             "monthly_push": True,
-            "notify_private": [],
-            "notify_group": ["default:GroupMessage:10001"],
-            "target_limits": {},
+            "push_group_targets": [
+                {"id": "10001", "frequency": "", "time": "", "limit": None}
+            ],
+            "push_private_targets": [],
             "user_daily_limit": 5,
             "default_fuels": ["92", "95"],
         },
@@ -240,10 +248,17 @@ class TestPrefsValidation(unittest.TestCase):
             "push_hour": 8,
             "push_minute": 30,
             "monthly_push": False,
-            "private_targets": [{"id": "123456001", "limit": 10}],
-            "group_targets": [
-                {"id": "10001", "limit": None},
-                {"id": "default:GroupMessage:20002", "limit": 0},
+            "push_group_targets": [
+                {"id": "10001", "frequency": "", "time": "", "limit": None},
+                {
+                    "id": "default:GroupMessage:20002",
+                    "frequency": "daily",
+                    "time": "08:30",
+                    "limit": 0,
+                },
+            ],
+            "push_private_targets": [
+                {"id": "123456001", "frequency": "", "time": "", "limit": 10}
             ],
             "user_daily_limit": 3,
             "default_fuels": ["92", "95", "92"],
@@ -257,17 +272,21 @@ class TestPrefsValidation(unittest.TestCase):
         self.assertEqual(b["provinces"], ["江苏", "上海"])
         self.assertEqual((b["push_hour"], b["push_minute"]), (8, 30))
         self.assertFalse(b["monthly_push"])
-        self.assertEqual(b["notify_private"], ["default:FriendMessage:123456001"])
         self.assertEqual(
-            b["notify_group"],
-            ["default:GroupMessage:10001", "default:GroupMessage:20002"],
+            b["push_private_targets"],
+            [{"id": "123456001", "frequency": "", "time": "", "limit": 10}],
         )
         self.assertEqual(
-            b["target_limits"],
-            {
-                "default:FriendMessage:123456001": 10,
-                "default:GroupMessage:20002": 0,
-            },
+            b["push_group_targets"],
+            [
+                {"id": "10001", "frequency": "", "time": "", "limit": None},
+                {
+                    "id": "default:GroupMessage:20002",
+                    "frequency": "daily",
+                    "time": "08:30",
+                    "limit": 0,
+                },
+            ],
         )
         self.assertEqual(b["user_daily_limit"], 3)
         self.assertEqual(b["default_fuels"], ["92", "95"])
@@ -297,20 +316,44 @@ class TestPrefsValidation(unittest.TestCase):
 
     def test_c08_targets_mixed_and_dedup(self):
         p = self.valid_payload()
-        p["group_targets"] = [
-            {"id": "10001", "limit": 4},
-            {"id": "10001", "limit": 9},
-            {"id": "default:GroupMessage:30003", "limit": None},
+        p["push_group_targets"] = [
+            {"id": "10001", "frequency": "", "time": "", "limit": 4},
+            {"id": "10001", "frequency": "", "time": "", "limit": 9},
+            {
+                "id": "default:GroupMessage:30003",
+                "frequency": "",
+                "time": "",
+                "limit": None,
+            },
         ]
         self.assertEqual(self.prefs.apply_web_update(p), [])
         self.assertEqual(
-            self.prefs.config["basic"]["notify_group"],
-            ["default:GroupMessage:10001", "default:GroupMessage:30003"],
+            self.prefs.config["basic"]["push_group_targets"],
+            [
+                {"id": "10001", "frequency": "", "time": "", "limit": 4},
+                {
+                    "id": "default:GroupMessage:30003",
+                    "frequency": "",
+                    "time": "",
+                    "limit": None,
+                },
+            ],
         )
-        self.assertEqual(
-            self.prefs.config["basic"]["target_limits"],
-            {"default:GroupMessage:10001": 4, "default:FriendMessage:123456001": 10},
-        )
+
+    def test_c08b_row_schedule_override_and_errors(self):
+        """行内调度覆盖：weekly:N 与 HH:MM 合法，非法格式报错不落盘。"""
+        p = self.valid_payload()
+        before = list(self.prefs.config["basic"]["push_group_targets"])
+        p["push_group_targets"] = [
+            {"id": "10001", "frequency": "weekly:5", "time": "20:30", "limit": None},
+            {"id": "10002", "frequency": "hourly", "time": "", "limit": None},
+            {"id": "10003", "frequency": "", "time": "25:00", "limit": None},
+        ]
+        errs = self.prefs.apply_web_update(p)
+        self.assertTrue(any("频率" in e for e in errs))
+        self.assertTrue(any("时刻" in e for e in errs))
+        # 校验失败整体不落盘（errors 非空直接返回），旧行保持不变
+        self.assertEqual(self.prefs.config["basic"]["push_group_targets"], before)
 
     def test_c10_limit_zero_ok(self):
         p = self.valid_payload()
@@ -348,13 +391,17 @@ class TestPrefsValidation(unittest.TestCase):
 
     def test_c21_invalid_target_limit_and_id(self):
         p = self.valid_payload()
-        p["private_targets"] = [{"id": "123456001", "limit": -1}]
-        self.assertTrue(any("负数" in e for e in self.prefs.apply_web_update(p)))
+        p["push_private_targets"] = [
+            {"id": "123456001", "frequency": "", "time": "", "limit": -1}
+        ]
+        self.assertTrue(any("限额" in e for e in self.prefs.apply_web_update(p)))
         p = self.valid_payload()
-        p["private_targets"] = [{"id": "abc", "limit": 1}]
+        p["push_private_targets"] = [{"id": "abc", "frequency": "", "time": "", "limit": 1}]
         self.assertTrue(any("无法识别" in e for e in self.prefs.apply_web_update(p)))
         p = self.valid_payload()
-        p["private_targets"] = [{"id": "123456001", "limit": "很多"}]
+        p["push_private_targets"] = [
+            {"id": "123456001", "frequency": "", "time": "", "limit": "很多"}
+        ]
         self.assertTrue(any("整数" in e for e in self.prefs.apply_web_update(p)))
 
     def test_c22_limits_survive_prefs_rebuild(self):
@@ -362,7 +409,10 @@ class TestPrefsValidation(unittest.TestCase):
         rebuilt = Prefs(self.prefs.config)
         self.assertEqual(rebuilt.quota_limit_for("default:FriendMessage:123456001"), 10)
         payload = rebuilt.web_payload()
-        self.assertEqual(payload["private_targets"], [{"id": "123456001", "limit": 10}])
+        self.assertEqual(
+            payload["push_private_targets"],
+            [{"id": "123456001", "frequency": "", "time": "", "limit": 10}],
+        )
 
     def test_c23_unknown_target_uses_global_default(self):
         self.assertEqual(self.prefs.apply_web_update(self.valid_payload()), [])
@@ -382,11 +432,8 @@ class TestPrefsValidation(unittest.TestCase):
         prefs.save()
         rebuilt = AstrBotConfig(config_path=path, schema=schema)
         self.assertEqual(
-            rebuilt["basic"]["target_limits"],
-            {
-                "default:FriendMessage:123456001": 10,
-                "default:GroupMessage:20002": 0,
-            },
+            rebuilt["basic"]["push_private_targets"],
+            [{"id": "123456001", "frequency": "", "time": "", "limit": 10}],
         )
         self.assertEqual(
             Prefs(rebuilt).quota_limit_for("default:FriendMessage:123456001"), 10
@@ -585,28 +632,18 @@ class TestDatasource(unittest.TestCase):
             datasource.fetch_province("江苏", "")
 
     def _run_with_resp(self, body: bytes):
-        """模拟 SNI 直连链路：getaddrinfo → _SNIHTTPSConnection → 响应。"""
-        resp = mock.Mock()
-        resp.read.return_value = body
-        conn = mock.Mock()
-        conn.getresponse.return_value = resp
-        with (
-            mock.patch.object(
-                datasource.socket,
-                "getaddrinfo",
-                return_value=[(0, 0, 0, "", ("1.2.3.4", 443))],
-            ),
-            mock.patch.object(
-                datasource, "_SNIHTTPSConnection", return_value=conn
-            ) as mk_conn,
-        ):
+        """模拟出网守卫链路：guarded_request 直接返回预设响应体。"""
+        with mock.patch.object(
+            datasource, "guarded_request", return_value=(200, body)
+        ) as mk_req:
             data = datasource.fetch_province("江苏", "k")
-        # 连接目标必须是校验后的公网 IP，SNI/证书与 Host 头用原主机名
-        self.assertEqual(mk_conn.call_args.args[0], "1.2.3.4")
-        self.assertEqual(mk_conn.call_args.kwargs.get("sni"), "route.showapi.com")
-        self.assertEqual(mk_conn.call_args.kwargs.get("timeout"), datasource.API_TIMEOUT)
+        # 请求必须打到官方域名与数据源接口，带 Host 头（SSRF 守卫细节在 TestNetGuard）
+        self.assertEqual(mk_req.call_args.args[0], "route.showapi.com")
+        self.assertEqual(mk_req.call_args.args[1], "GET")
+        self.assertIn("appKey=k", mk_req.call_args.args[2])
+        self.assertEqual(mk_req.call_args.kwargs.get("timeout"), datasource.API_TIMEOUT)
         self.assertEqual(
-            conn.request.call_args.kwargs["headers"]["Host"],
+            mk_req.call_args.kwargs["headers"]["Host"],
             "route.showapi.com",
         )
         return data
@@ -648,16 +685,14 @@ class TestDatasource(unittest.TestCase):
             self._run_with_resp(body)
 
     def test_g05_network_error(self):
-        with mock.patch.object(
-            datasource.socket, "getaddrinfo", side_effect=OSError("超时")
-        ):
+        with mock.patch.object(datasource, "guarded_request", side_effect=OSError("超时")):
             with self.assertRaises(datasource.ShowApiError):
                 datasource.fetch_province("江苏", "k")
 
     def test_g06_private_ip_rejected(self):
-        """SSRF 守卫：数据源解析到私网/环回地址时拒绝请求。"""
+        """SSRF 守卫（netguard）：数据源解析到私网/环回地址时拒绝请求。"""
         with mock.patch.object(
-            datasource.socket,
+            netguard.socket,
             "getaddrinfo",
             return_value=[(0, 0, 0, "", ("127.0.0.1", 443))],
         ):
@@ -1537,8 +1572,10 @@ class TestGenImage(unittest.TestCase):
             "push_frequency": "off",
             "change_remind_days": 1,
             "monthly_push": True,
-            "private_targets": [],
-            "group_targets": [{"id": "10001", "limit": None}],
+            "push_private_targets": [],
+            "push_group_targets": [
+                {"id": "10001", "frequency": "", "time": "", "limit": None}
+            ],
             "user_daily_limit": 5,
             "default_fuels": ["92"],
             "app_key": "k",
@@ -1690,7 +1727,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             plugin_main.genimage, "generate", side_effect=RuntimeError("403")
         ):
             await self.plugin._push_report(
-                [("江苏", fake_price_data(8.09))], ["default:GroupMessage:10001"]
+                [("江苏", fake_price_data(8.09))], self.plugin.prefs.push_rows()
             )
         parts = self.ctx.sent_messages[0][1].chain
         text = parts[0].text
@@ -1738,7 +1775,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         seen = {}
         with mock.patch.object(plugin_main.genimage, "generate", self._capturing_gen(seen)):
             await self.plugin._push_report(
-                [("广东", fake_price_data())], ["default:GroupMessage:10001"]
+                [("广东", fake_price_data())], self.plugin.prefs.push_rows()
             )
         self.assertIn("油价上涨提醒", seen["prompt"])
         self.assertIn("⚡", seen["prompt"])
@@ -1772,7 +1809,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         calls = []
         with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
             await self.plugin._push_report(
-                [("江苏", fake_price_data(8.09))], ["default:GroupMessage:10001"]
+                [("江苏", fake_price_data(8.09))], self.plugin.prefs.push_rows()
             )
             await run_cmd(self.plugin.today_cmd(MockEvent(), "江苏"))
             await run_cmd(self.plugin.today_cmd(MockEvent(), "江苏"))
@@ -1868,7 +1905,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(2)
         ):  # 生效日=后天 → 剩余 1 天（窗口日 days=0 归官方公告推送）
             rows = await self.plugin._collect_today(["江苏"])
-            await self.plugin._advance_remind(rows)
+            await self.plugin._advance_remind(rows, self.plugin.prefs.push_rows())
         plains = [
             p.text
             for _, mc in self.ctx.sent_messages
@@ -1897,7 +1934,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(plugin_main.genimage, "generate", fake),
         ):
             rows = await self.plugin._collect_today(["江苏", "上海"])
-            await self.plugin._advance_remind(rows)
+            await self.plugin._advance_remind(rows, self.plugin.prefs.push_rows())
         self.assertEqual(len(prompts), 1)
         self.assertIn("调价提醒", prompts[0])
         self.assertIn("江苏 92号汽油：", prompts[0])
@@ -1921,7 +1958,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
                 side_effect=fetch_with_window(2),
             ):
                 rows = await self.plugin._collect_today(["江苏"])
-                await self.plugin._advance_remind(rows)
+                await self.plugin._advance_remind(rows, self.plugin.prefs.push_rows())
         plains = [
             p.text
             for _, mc in self.ctx.sent_messages
@@ -1964,7 +2001,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
         ):
             rows = await self.plugin._collect_today(["江苏"])
-            await self.plugin._advance_remind(rows)
+            await self.plugin._advance_remind(rows, self.plugin.prefs.push_rows())
         self.assertEqual(len(self.ctx.sent_messages), 0)
 
     async def test_oil1008_announce_gate(self):
@@ -2077,7 +2114,9 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("官方公告：汽油每吨下调 645 元", plains[0])
         self.assertIn("就是今晚 24 时", plains[0])
         self.assertEqual(
-            self.plugin._load_push_state()["official_done"]["江苏"],
+            self.plugin._load_push_state()["official_done"][
+                "default:GroupMessage:10001::江苏"
+            ],
             self.plugin.store.today(),
         )
 
@@ -2143,14 +2182,10 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("上限", out[0]["text"])
 
     async def test_c20_quota_isolated_by_target_and_user(self):
-        self.cfg["basic"]["notify_group"] = [
-            "default:GroupMessage:10001",
-            "default:GroupMessage:20002",
+        self.cfg["basic"]["push_group_targets"] = [
+            {"id": "10001", "frequency": "", "time": "", "limit": 1},
+            {"id": "20002", "frequency": "", "time": "", "limit": 2},
         ]
-        self.cfg["basic"]["target_limits"] = {
-            "default:GroupMessage:10001": 1,
-            "default:GroupMessage:20002": 2,
-        }
         ev_g1 = MockEvent(sender="u1", umo="default:GroupMessage:10001")
         self.assertTrue(self.plugin._quota_guard(ev_g1)[0])
         self.assertFalse(self.plugin._quota_guard(ev_g1)[0])
@@ -2267,7 +2302,9 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
 
         self.ctx.send_message = flaky
         self.cfg["basic"]["provinces"] = ["江苏"]
-        self.cfg["basic"]["notify_private"] = ["default:FriendMessage:123456001"]
+        self.cfg["basic"]["push_private_targets"] = [
+            {"id": "123456001", "frequency": "", "time": "", "limit": None}
+        ]
         await self.plugin._daily_push()
         self.assertGreaterEqual(len(self.ctx.sent_messages), 2)
 
@@ -2294,16 +2331,22 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             return d
 
         with mock.patch.object(plugin_main.datasource, "fetch_province", side_effect=fake):
-            await self.plugin._push_round(datetime.now())  # 首次：仅记录基线
+            await self.plugin._push_round(
+                self.plugin.prefs.push_rows(), datetime.now()
+            )  # 首次：仅记录基线
             self.assertEqual(len(self.ctx.sent_messages), 0)
             price["v"] = 8.30  # 价格变动（调价落地）
             h = self.plugin.store.history()  # 清当日缓存强制重新抓取
             h["江苏"].pop(self.plugin.store.today(), None)
             self.plugin.store._save(self.plugin.store.history_file, h)
-            await self.plugin._push_round(datetime.now())  # 有变动：推送
+            await self.plugin._push_round(
+                self.plugin.prefs.push_rows(), datetime.now()
+            )  # 有变动：推送
             self.assertGreaterEqual(len(self.ctx.sent_messages), 1)
             n = len(self.ctx.sent_messages)
-            await self.plugin._push_round(datetime.now())  # 价格未再变：不重复
+            await self.plugin._push_round(
+                self.plugin.prefs.push_rows(), datetime.now()
+            )  # 价格未再变：不重复
             self.assertEqual(len(self.ctx.sent_messages), n)
 
     async def test_b12_advance_remind_gating_and_daily_dedup(self):
@@ -2314,7 +2357,9 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(4)
         ):
             rows = await self.plugin._collect_today(["江苏"])
-            await self.plugin._advance_remind(rows)  # 剩余 4 天 > N=1：不发
+            await self.plugin._advance_remind(
+                rows, self.plugin.prefs.push_rows()
+            )  # 剩余 4 天 > N=1：不发
             self.assertEqual(len(self.ctx.sent_messages), 0)
         self.cfg["basic"]["change_remind_days"] = 3
         with mock.patch.object(
@@ -2324,7 +2369,9 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             h["江苏"].pop(self.plugin.store.today(), None)
             self.plugin.store._save(self.plugin.store.history_file, h)
             rows = await self.plugin._collect_today(["江苏"])
-            await self.plugin._advance_remind(rows)  # 窗口剩余 4 天 > N=3：仍不发
+            await self.plugin._advance_remind(
+                rows, self.plugin.prefs.push_rows()
+            )  # 窗口剩余 4 天 > N=3：仍不发
             self.assertEqual(len(self.ctx.sent_messages), 0)
         self.cfg["basic"]["change_remind_days"] = 1
         with mock.patch.object(
@@ -2334,10 +2381,14 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             h["江苏"].pop(self.plugin.store.today(), None)
             self.plugin.store._save(self.plugin.store.history_file, h)
             rows = await self.plugin._collect_today(["江苏"])
-            await self.plugin._advance_remind(rows)  # 剩余 1 天 ≤ N：单省=文字+图片
+            await self.plugin._advance_remind(
+                rows, self.plugin.prefs.push_rows()
+            )  # 剩余 1 天 ≤ N：单省=文字+图片
             self.assertGreaterEqual(len(self.ctx.sent_messages), 2)
             n = len(self.ctx.sent_messages)
-            await self.plugin._advance_remind(rows)  # 同日去重
+            await self.plugin._advance_remind(
+                rows, self.plugin.prefs.push_rows()
+            )  # 同日去重
             self.assertEqual(len(self.ctx.sent_messages), n)
 
     async def test_b09_daily_loop_dedup(self):
@@ -2345,9 +2396,9 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         now = datetime.now()
         self.cfg["basic"]["push_hour"] = now.hour
         self.cfg["basic"]["push_minute"] = now.minute
-        self.plugin._pushed_date = None
+        self.plugin._pushed_slots = {}
 
-        async def fake_round(now_dt):
+        async def fake_round(slot_rows, now_dt):
             calls.append(1)
 
         async def boom(seconds):
@@ -2360,7 +2411,8 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await self.plugin._daily_loop()
         self.assertEqual(len(calls), 1)
-        self.assertEqual(self.plugin._pushed_date, now.strftime("%Y-%m-%d"))
+        slot = f"{now.hour:02d}:{now.minute:02d}"
+        self.assertEqual(self.plugin._pushed_slots.get(slot), now.strftime("%Y-%m-%d"))
         calls.clear()
 
         with (
@@ -2369,7 +2421,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         ):
             with self.assertRaises(asyncio.CancelledError):
                 await self.plugin._daily_loop()
-        self.assertEqual(len(calls), 0)  # 同日去重
+        self.assertEqual(len(calls), 0)  # 同槽同日去重
 
     # ---------- oil_1001：推送轮矩阵（频率 × 调价提醒） ----------
 
@@ -2409,7 +2461,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
                             plugin_main.genimage, "generate", _fake_genimage_generate
                         ),
                     ):
-                        await pl._push_round(datetime.now())
+                        await pl._push_round(pl.prefs.push_rows(), datetime.now())
                     self.assertEqual(len(ctx.sent_messages), expect)
                 finally:
                     for t in pl._tasks:
@@ -2423,7 +2475,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(
             plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(1)
         ):
-            await self.plugin._push_round(datetime.now())
+            await self.plugin._push_round(self.plugin.prefs.push_rows(), datetime.now())
         # 单省卡片 = 文字 + 图片两条，预告被去重
         self.assertEqual(len(self.ctx.sent_messages), 2)
 
@@ -2434,7 +2486,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(
             plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(9)
         ):
-            await self.plugin._push_round(datetime.now())
+            await self.plugin._push_round(self.plugin.prefs.push_rows(), datetime.now())
         self.assertEqual(len(self.ctx.sent_messages), 0)
 
     # ---------- oil_1001：省份自适应（F7~F9） ----------
@@ -2442,9 +2494,9 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
     async def test_oil1001_sets_grouping_two_sets(self):
         """两个目标偏好不同 → 两个省份集，各自生成一次（生图 2 次、互不影响）。"""
         self.cfg["basic"]["auto_provinces"] = True
-        self.cfg["basic"]["notify_group"] = [
-            "default:GroupMessage:10001",
-            "default:GroupMessage:20002",
+        self.cfg["basic"]["push_group_targets"] = [
+            {"id": "10001", "frequency": "", "time": "", "limit": None},
+            {"id": "20002", "frequency": "", "time": "", "limit": None},
         ]
         for _ in range(3):
             self.plugin.store.record_query("default:GroupMessage:10001", "u1", ["广东"])
@@ -2463,7 +2515,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             ),
             mock.patch.object(plugin_main.genimage, "generate", fake_gen),
         ):
-            await self.plugin._push_round(datetime.now())
+            await self.plugin._push_round(self.plugin.prefs.push_rows(), datetime.now())
         self.assertEqual(len(gen_calls), 2)  # 两个省份集各生成一次
         self.assertTrue(any("广东" in n for n in gen_calls))
         self.assertTrue(any("四川" in n for n in gen_calls))
@@ -2475,9 +2527,9 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
     async def test_oil1001_same_set_shared_generation(self):
         """省份集相同的目标共享一次生成（生图 1 次，两目标都收到）。"""
         self.cfg["basic"]["auto_provinces"] = True
-        self.cfg["basic"]["notify_group"] = [
-            "default:GroupMessage:10001",
-            "default:GroupMessage:20002",
+        self.cfg["basic"]["push_group_targets"] = [
+            {"id": "10001", "frequency": "", "time": "", "limit": None},
+            {"id": "20002", "frequency": "", "time": "", "limit": None},
         ]
         for _ in range(3):
             self.plugin.store.record_query("default:GroupMessage:10001", "u1", ["广东"])
@@ -2496,7 +2548,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             ),
             mock.patch.object(plugin_main.genimage, "generate", fake_gen),
         ):
-            await self.plugin._push_round(datetime.now())
+            await self.plugin._push_round(self.plugin.prefs.push_rows(), datetime.now())
         self.assertEqual(len(gen_calls), 1)
         self.assertEqual(len(self.ctx.sent_messages), 4)
 
@@ -2529,21 +2581,27 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["u"], "tester")
 
     async def test_oil1001_state_pruned_to_current_sets(self):
-        """F9：快照/预告去重状态只保留当前省份集。"""
+        """F9/oil_1010：快照/预告去重状态只保留当前目标行的键（行标识::省集）。"""
         self.cfg["basic"]["change_remind_days"] = 1
         st = self.plugin._load_push_state()
-        st["price_snaps"] = {"旧省集": {"江苏": {"92": 8.0}}, "江苏、上海": {}}
+        st["price_snaps"] = {
+            "旧省集": {"江苏": {"92": 8.0}},
+            "default:GroupMessage:10001::江苏、上海": {},
+        }
         st["remind_done"] = {"旧省集": "2026-10-01"}
         self.plugin._save_push_state(st)
         with mock.patch.object(
             plugin_main.datasource, "fetch_province", side_effect=fetch_with_window(2)
         ):
-            await self.plugin._push_round(
-                datetime.now()
-            )  # 预告触发（剩余 1 天），remind_done 写入当前集
+            # 预告触发（剩余 1 天），remind_done 写入当前行的键
+            await self.plugin._push_round(self.plugin.prefs.push_rows(), datetime.now())
         st2 = self.plugin._load_push_state()
-        self.assertEqual(set(st2.get("price_snaps")), {"江苏、上海"})
-        self.assertEqual(set(st2.get("remind_done")), {"江苏、上海"})
+        self.assertEqual(
+            set(st2.get("price_snaps")), {"default:GroupMessage:10001::江苏、上海"}
+        )
+        self.assertEqual(
+            set(st2.get("remind_done")), {"default:GroupMessage:10001::江苏、上海"}
+        )
 
     # ---------- Web API（TC-D/C16/H03） ----------
     async def test_d01_config_get_payload(self):
@@ -2555,11 +2613,12 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             "push_hour",
             "push_minute",
             "push_frequency",
+            "push_weekday",
             "change_remind_days",
             "auto_provinces",
             "monthly_push",
-            "private_targets",
-            "group_targets",
+            "push_group_targets",
+            "push_private_targets",
             "user_daily_limit",
             "default_fuels",
             "app_key",
@@ -2687,8 +2746,12 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             "push_hour": 7,
             "push_minute": 15,
             "monthly_push": True,
-            "private_targets": [{"id": "123456001", "limit": 9}],
-            "group_targets": [{"id": "10001", "limit": 4}],
+            "push_group_targets": [
+                {"id": "10001", "frequency": "", "time": "", "limit": 4}
+            ],
+            "push_private_targets": [
+                {"id": "123456001", "frequency": "", "time": "", "limit": 9}
+            ],
             "user_daily_limit": 2,
             "default_fuels": ["95"],
             "app_key": "kkk",
@@ -2699,14 +2762,12 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(cfg.saved, 1)
         self.assertEqual(cfg["basic"]["provinces"], ["广东"])
         self.assertEqual(
-            cfg["basic"]["notify_private"], ["default:FriendMessage:123456001"]
+            cfg["basic"]["push_private_targets"],
+            [{"id": "123456001", "frequency": "", "time": "", "limit": 9}],
         )
         self.assertEqual(
-            cfg["basic"]["target_limits"],
-            {
-                "default:FriendMessage:123456001": 9,
-                "default:GroupMessage:10001": 4,
-            },
+            cfg["basic"]["push_group_targets"],
+            [{"id": "10001", "frequency": "", "time": "", "limit": 4}],
         )
         self.assertTrue(pl._loop_started)  # TC-C16：appKey 就绪自动补启定时器
 
@@ -2724,6 +2785,808 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/astrbot_plugin_oil_price/stats/render", routes)
         self.assertIn("/astrbot_plugin_oil_price/prefs/list", routes)
         self.assertIn("/astrbot_plugin_oil_price/prefs/manage", routes)
+
+    # ---------- 通用推送目标行（oil_1010：混平台行、槽分调度、行级去重） ----------
+
+    @staticmethod
+    def _row(id, frequency="", time="", limit=None):
+        return {"id": id, "frequency": frequency, "time": time, "limit": limit}
+
+    def _rows_config(self, group_rows=None, priv_rows=None, app=False):
+        cfg = base_config()
+        cfg["basic"]["push_group_targets"] = group_rows or []
+        cfg["basic"]["push_private_targets"] = priv_rows or []
+        if app:
+            cfg["api"]["feishu_app_id"] = "cli_a"
+            cfg["api"]["feishu_app_secret"] = "s1"
+        return cfg
+
+    async def test_x01_webhook_row_text_only(self):
+        """仅 webhook 目标行：常规推送走文字版（webhook 不能收图）。"""
+        pl, _ctx, _cfg = make_plugin(
+            name="x01",
+            config=self._rows_config(
+                group_rows=[self._row("https://open.feishu.cn/open-apis/bot/v2/hook/abc")]
+            ),
+        )
+        sent = []
+        with mock.patch.object(
+            feishu,
+            "send_webhook",
+            side_effect=lambda t, text: sent.append(t["url"]),
+        ):
+            await pl._daily_push()
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0].startswith("https://open.feishu.cn/"))
+
+    async def test_x02_mixed_rows_capability_routing(self):
+        """混合行：多省仅图片——webhook 行只收速览文字，图片能力行（umo/应用行）
+        只收图片；应用行上传一次、逐目标复用 image_key。"""
+        pl, ctx, _cfg = make_plugin(
+            name="x02",
+            config=self._rows_config(
+                group_rows=[
+                    self._row("https://open.feishu.cn/open-apis/bot/v2/hook/abc"),
+                    self._row("oc_g1"),
+                    self._row("10001"),
+                ],
+                app=True,
+            ),
+        )
+        img_targets, hook_texts, app_texts = [], [], []
+        with (
+            mock.patch.object(
+                plugin_main.OilPricePlugin,
+                "_gen_endpoints",
+                return_value=[MockProvider()],
+            ),
+            mock.patch.object(feishu, "upload_image", return_value="img_k"),
+            mock.patch.object(
+                feishu,
+                "send_app_image",
+                side_effect=lambda a, s, t, p, k=None, host=None: img_targets.append(
+                    t["id"]
+                ),
+            ),
+            mock.patch.object(
+                feishu,
+                "send_webhook",
+                side_effect=lambda t, text: hook_texts.append(text),
+            ),
+            mock.patch.object(
+                feishu,
+                "send_app_text",
+                side_effect=lambda a, s, t, text, host=None: app_texts.append(t["id"]),
+            ),
+        ):
+            await pl._daily_push()
+        # 多省=仅图片：应用行与 umo 行收图；webhook 行改收速览文字；应用行不重收文字
+        self.assertEqual(img_targets, ["oc_g1"])
+        self.assertEqual(len(hook_texts), 1)
+        self.assertEqual(app_texts, [])
+        # umo 行 10001：多省仅图片，收到一条图片消息链
+        self.assertEqual(len(ctx.sent_messages), 1)
+
+    async def test_x03_row_level_state_isolated(self):
+        """行级去重（oil_1010）：状态键=行标识::省集，同槽重跑预告不重发。"""
+        hook = "https://open.feishu.cn/open-apis/bot/v2/hook/abc"
+        cfg = self._rows_config(
+            group_rows=[self._row("10001"), self._row(hook, frequency="off")]
+        )
+        pl, ctx, _cfg = make_plugin(name="x03", config=cfg)
+        webhook_texts = []
+        with (
+            mock.patch.object(
+                plugin_main.datasource,
+                "fetch_province",
+                side_effect=fetch_with_window(2),
+            ),
+            mock.patch.object(
+                feishu,
+                "send_webhook",
+                side_effect=lambda t, text: webhook_texts.append(text),
+            ),
+        ):
+            rows = pl.prefs.push_rows()
+            await pl._push_round(rows, datetime.now())
+            first_qq = len(ctx.sent_messages)
+            # 同一天同槽再跑一轮：预告被 remind_done 行级键去重
+            await pl._push_round(rows, datetime.now())
+        st = pl._load_push_state()
+        self.assertIn("default:GroupMessage:10001::江苏、上海", st.get("remind_done", {}))
+        self.assertIn(f"{hook}::江苏、上海", st.get("remind_done", {}))
+        self.assertIn("default:GroupMessage:10001::江苏、上海", st.get("price_snaps", {}))
+        self.assertIn(f"{hook}::江苏、上海", st.get("price_snaps", {}))
+        # webhook 行 freq=off：首轮只有一条预告文字，重跑不重发
+        self.assertEqual(len(webhook_texts), 1)
+        # umo 行 daily：首轮=常规播报+预告 2 条；重跑常规会重发（无循环守卫）、预告不重发
+        self.assertEqual(first_qq, 2)
+
+    async def test_x04_webhook_secret_passed_to_sender(self):
+        hook = "https://open.feishu.cn/open-apis/bot/v2/hook/abc##mysecret"
+        pl, _ctx, _cfg = make_plugin(
+            name="x04", config=self._rows_config(group_rows=[self._row(hook)])
+        )
+        captured = []
+        with mock.patch.object(
+            feishu,
+            "send_webhook",
+            side_effect=lambda t, text: captured.append(t),
+        ):
+            await pl._daily_push()
+        self.assertEqual(captured[0]["secret"], "mysecret")
+
+    async def test_x05_monthly_skips_when_no_image_row(self):
+        """全部为 webhook 行：月度图无可用图片行，直接跳过（不生成）。"""
+        pl, _ctx, _cfg = make_plugin(
+            name="x05",
+            config=self._rows_config(
+                group_rows=[self._row("https://open.feishu.cn/open-apis/bot/v2/hook/abc")]
+            ),
+        )
+        with mock.patch.object(plugin_main.charts, "build_lines") as mk_lines:
+            await pl._monthly_push()
+        mk_lines.assert_not_called()
+
+    async def test_x06_push_test_cmd_reports_rows(self):
+        """/油价推送测试 回执报告全部目标行。"""
+        pl, ctx, _cfg = make_plugin(
+            name="x06",
+            config=self._rows_config(
+                group_rows=[self._row("https://open.feishu.cn/open-apis/bot/v2/hook/abc")],
+                priv_rows=[self._row("123456001")],
+            ),
+        )
+        ev = MockEvent()
+        with mock.patch.object(feishu, "send_webhook", return_value=None):
+            out = await run_cmd(pl.push_test_cmd(ev))
+        text = out[-1]["text"]
+        self.assertIn("default:FriendMessage:123456001", text)
+        self.assertIn("https://open.feishu.cn/open-apis/bot/v2/hook/abc", text)
+        # umo 个人行 123456001 通过 ctx 实际收到消息
+        self.assertGreaterEqual(len(ctx.sent_messages), 1)
+
+    async def test_x07_feishu_chats_cmd(self):
+        """/飞书群列表：未配凭证给提示；配凭证后列出 chat_id。"""
+        pl, _ctx, _cfg = make_plugin(name="x07a", config=base_config())
+        ev = MockEvent()
+        out = await run_cmd(pl.feishu_chats_cmd(ev))
+        self.assertIn("app_id", out[0]["text"])
+        pl, _ctx, _cfg = make_plugin(name="x07b", config=self._rows_config(app=True))
+        with mock.patch.object(
+            feishu,
+            "list_chats",
+            return_value=[("oc_1", "油价群")],
+        ):
+            out = await run_cmd(pl.feishu_chats_cmd(ev))
+        self.assertIn("oc_1", out[-1]["text"])
+        self.assertIn("油价群", out[-1]["text"])
+
+    async def test_x08_row_schedule_override(self):
+        """行内调度覆盖：weekly:N 与 HH:MM 解析；留空继承全局默认。"""
+        cfg = self._rows_config(
+            group_rows=[self._row("10001", frequency="weekly:5", time="20:30")]
+        )
+        rows = Prefs(cfg).push_rows()
+        self.assertEqual(rows[0]["frequency"], "weekly")
+        self.assertEqual(rows[0]["weekday"], 5)
+        self.assertEqual((rows[0]["hour"], rows[0]["minute"]), (20, 30))
+        rows2 = Prefs(base_config()).push_rows()
+        self.assertEqual(rows2[0]["frequency"], "daily")
+        self.assertEqual(rows2[0]["weekday"], 0)
+        self.assertEqual((rows2[0]["hour"], rows2[0]["minute"]), (9, 0))
+
+    async def test_x09_adjust_push_cmd_force_semantics(self):
+        """/油价调整：手动触发调价提醒——无视去重与 ≤N 天门控，且不写去重状态。"""
+        cfg = self._rows_config(
+            group_rows=[self._row("https://open.feishu.cn/open-apis/bot/v2/hook/abc")]
+        )
+        pl, ctx, cfg = make_plugin(name="x09", config=cfg)
+        cfg["basic"]["change_remind_days"] = 0  # 自动提醒关闭，手动仍可触发
+        hook_texts = []
+        patches = [
+            mock.patch.object(
+                plugin_main.datasource,
+                "fetch_province",
+                side_effect=fetch_with_window(2),
+            ),
+            mock.patch.object(
+                feishu,
+                "send_webhook",
+                side_effect=lambda t, text: hook_texts.append(text),
+            ),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            out = await run_cmd(pl.price_adjust_push_cmd(MockEvent()))
+        finally:
+            for p in patches:
+                p.stop()
+        self.assertIn("调价提醒已推送", out[-1]["text"])
+        self.assertEqual(len(hook_texts), 1)  # webhook 行收到调价提醒文字
+        # force 不写去重状态：remind_done 保持为空
+        st = pl._load_push_state()
+        self.assertEqual(st.get("remind_done", {}), {})
+        # 再次执行仍会推送（不受去重影响）
+        for p in patches:
+            p.start()
+        try:
+            out = await run_cmd(pl.price_adjust_push_cmd(MockEvent()))
+        finally:
+            for p in patches:
+                p.stop()
+        self.assertEqual(len(hook_texts), 2)
+
+    async def test_x10_adjust_push_cmd_no_window(self):
+        """/油价调整：数据源无下次调价日期时不推送并如实提示。"""
+        pl, ctx, _cfg = make_plugin(name="x10")
+
+        def fake(prov, key):
+            d = fake_price_data()
+            d["next_change_time"] = ""
+            return d
+
+        with mock.patch.object(plugin_main.datasource, "fetch_province", side_effect=fake):
+            out = await run_cmd(pl.price_adjust_push_cmd(MockEvent()))
+        self.assertIn("未能推送", out[-1]["text"])
+        self.assertEqual(len(ctx.sent_messages), 0)
+
+
+# ======================= 出网守卫（netguard，v1.5 提取共享） =======================
+
+
+class TestNetGuard(unittest.TestCase):
+    """netguard：公网解析校验与 IP 直连的守卫细节（datasource/feishu 共用）。"""
+
+    def test_n01_resolve_rejects_private(self):
+        """SSRF 守卫：解析到私网/环回地址时拒绝。"""
+        with mock.patch.object(
+            netguard.socket,
+            "getaddrinfo",
+            return_value=[(0, 0, 0, "", ("192.168.1.1", 443))],
+        ):
+            with self.assertRaises(netguard.NetGuardError):
+                netguard.resolve_public_ip("example.com")
+
+    def test_n02_resolve_rejects_mixed_records(self):
+        """多解析结果中任一为非公网即整体拒绝（内网 IP 不放行）。"""
+        with mock.patch.object(
+            netguard.socket,
+            "getaddrinfo",
+            return_value=[
+                (0, 0, 0, "", ("1.2.3.4", 443)),
+                (0, 0, 0, "", ("127.0.0.1", 443)),
+            ],
+        ):
+            with self.assertRaises(netguard.NetGuardError):
+                netguard.resolve_public_ip("example.com")
+
+    def test_n03_resolve_returns_first_global(self):
+        with mock.patch.object(
+            netguard.socket,
+            "getaddrinfo",
+            return_value=[
+                (0, 0, 0, "", ("1.2.3.4", 443)),
+                (0, 0, 0, "", ("5.6.7.8", 443)),
+            ],
+        ):
+            self.assertEqual(netguard.resolve_public_ip("example.com"), "1.2.3.4")
+
+    def test_n04_resolve_dns_failure(self):
+        with mock.patch.object(netguard.socket, "getaddrinfo", side_effect=OSError("超时")):
+            with self.assertRaises(netguard.NetGuardError):
+                netguard.resolve_public_ip("example.com")
+
+    def test_n05_guarded_request_dials_ip_with_sni(self):
+        """TCP 连校验后的 IP，TLS SNI/证书仍校验原主机名（防 rebinding）。"""
+        resp = mock.Mock()
+        resp.status = 200
+        resp.read.return_value = b"{}"
+        conn = mock.Mock()
+        conn.getresponse.return_value = resp
+        with (
+            mock.patch.object(
+                netguard.socket,
+                "getaddrinfo",
+                return_value=[(0, 0, 0, "", ("1.2.3.4", 443))],
+            ),
+            mock.patch.object(netguard, "SNISafeConnection", return_value=conn) as mk_conn,
+        ):
+            status, raw = netguard.guarded_request("example.com", "GET", "/", timeout=5)
+        self.assertEqual((status, raw), (200, b"{}"))
+        # TCP 连校验后的 IP（第一个位置参数），SNI 走关键字参数传原主机名
+        self.assertEqual(mk_conn.call_args.args, ("1.2.3.4",))
+        self.assertEqual(mk_conn.call_args.kwargs.get("sni"), "example.com")
+        self.assertEqual(mk_conn.call_args.kwargs.get("port"), 443)
+
+
+# ======================= 飞书客户端（oil_1009） =======================
+
+
+class TestFeishu(unittest.TestCase):
+    """飞书客户端：目标分类、加签算法、请求构造与守卫接线。"""
+
+    def setUp(self):
+        feishu._reset_token_cache()
+
+    def test_p01_parse_webhook(self):
+        t, err = feishu.parse_target("https://open.feishu.cn/open-apis/bot/v2/hook/abc123")
+        self.assertEqual(err, "")
+        self.assertEqual(t["kind"], "webhook")
+        self.assertEqual(t["secret"], "")
+
+    def test_p02_parse_webhook_with_secret(self):
+        t, err = feishu.parse_target(
+            "https://open.feishu.cn/open-apis/bot/v2/hook/abc123##SEC"
+        )
+        self.assertEqual(err, "")
+        self.assertEqual(t["kind"], "webhook")
+        self.assertEqual(t["secret"], "SEC")
+
+    def test_p03_parse_non_official_host_rejected(self):
+        t, err = feishu.parse_target("https://evil.example.com/open-apis/bot/v2/hook/x")
+        self.assertIsNone(t)
+        self.assertIn("官方", err)
+
+    def test_p04_parse_kinds(self):
+        cases = {
+            "ou_8cb5bec1b1": "open_id",
+            "oc_0529e11f8f": "chat_id",
+            "13800138000": "mobile",
+            "a@b.co": "email",
+        }
+        for raw, kind in cases.items():
+            t, err = feishu.parse_target(raw)
+            self.assertEqual(err, "", raw)
+            self.assertEqual(t["kind"], kind, raw)
+
+    def test_p05_parse_invalid(self):
+        for raw in ("", "hello", "ou", "oc", "a@", "138"):
+            t, _err = feishu.parse_target(raw)
+            self.assertIsNone(t, raw)
+
+    def test_p06_mask_target(self):
+        m = feishu.mask_target({"kind": "mobile", "id": "13800138000"})
+        self.assertNotIn("13800138000", m)
+        self.assertIn("****", m)
+        m2 = feishu.mask_target(
+            {
+                "kind": "webhook",
+                "url": "https://open.feishu.cn/open-apis/bot/v2/hook/abc123",
+            }
+        )
+        self.assertNotIn("v2/hook", m2)
+
+    def test_p07_sign_secret(self):
+        """官方加签算法：HMAC-SHA256（key=ts\\nsecret，空消息）再 base64。"""
+        import base64
+        import hashlib
+        import hmac
+
+        expected = base64.b64encode(
+            hmac.new(b"1690000000\nsecret", digestmod=hashlib.sha256).digest()
+        ).decode()
+        self.assertEqual(feishu.sign_secret("secret", 1690000000), expected)
+
+    def test_p08_api_host_follows_webhook_cloud(self):
+        self.assertEqual(feishu.api_host([]), "open.feishu.cn")
+        self.assertEqual(
+            feishu.api_host(["https://open.larksuite.com/open-apis/bot/v2/hook/x"]),
+            "open.larksuite.com",
+        )
+
+    def test_p09_request_rejects_non_official_host_before_dial(self):
+        """白名单外的域在守卫请求前就拒绝（不发任何网络请求）。"""
+        with mock.patch.object(
+            feishu, "guarded_request", side_effect=AssertionError("不应发起请求")
+        ):
+            with self.assertRaises(feishu.FeishuError):
+                feishu._request("evil.com", "POST", "/x", body=b"{}", headers={})
+
+    def test_p10_send_webhook_payload(self):
+        t = {
+            "kind": "webhook",
+            "url": "https://open.feishu.cn/open-apis/bot/v2/hook/abc",
+            "secret": "",
+        }
+        with mock.patch.object(
+            feishu, "guarded_request", return_value=(200, b'{"code": 0}')
+        ) as mk:
+            feishu.send_webhook(t, "hi")
+        args = mk.call_args
+        self.assertEqual(args.args[0], "open.feishu.cn")
+        self.assertEqual(args.args[2], "/open-apis/bot/v2/hook/abc")
+        body = json.loads(args.kwargs["body"].decode("utf-8"))
+        self.assertEqual(body, {"msg_type": "text", "content": {"text": "hi"}})
+
+    def test_p11_send_webhook_signed(self):
+        t = {
+            "kind": "webhook",
+            "url": "https://open.feishu.cn/open-apis/bot/v2/hook/abc",
+            "secret": "SEC",
+        }
+        with mock.patch.object(
+            feishu, "guarded_request", return_value=(200, b'{"code": 0}')
+        ) as mk:
+            feishu.send_webhook(t, "hi")
+        body = json.loads(mk.call_args.kwargs["body"].decode("utf-8"))
+        self.assertEqual(body["msg_type"], "text")
+        self.assertTrue(body.get("timestamp"))
+        self.assertTrue(body.get("sign"))
+
+    def test_p12_webhook_error_code_raises(self):
+        t = {
+            "kind": "webhook",
+            "url": "https://open.feishu.cn/open-apis/bot/v2/hook/abc",
+            "secret": "",
+        }
+        with mock.patch.object(
+            feishu,
+            "guarded_request",
+            return_value=(200, b'{"code": 19024, "msg": "blocked"}'),
+        ):
+            with self.assertRaises(feishu.FeishuError):
+                feishu.send_webhook(t, "hi")
+
+    def test_p13_token_cache_single_fetch(self):
+        resp = json.dumps(
+            {"code": 0, "tenant_access_token": "t-1", "expire": 7200}
+        ).encode()
+        with mock.patch.object(feishu, "guarded_request", return_value=(200, resp)) as mk:
+            t1 = feishu.tenant_access_token("cli_a", "s1")
+            t2 = feishu.tenant_access_token("cli_a", "s1")
+        self.assertEqual(t1, "t-1")
+        self.assertEqual(t2, "t-1")
+        self.assertEqual(mk.call_count, 1)
+
+    def test_p14_send_app_text_routes_receive_id_type(self):
+        t = {"kind": "open_id", "id": "ou_x1"}
+        with (
+            mock.patch.object(feishu, "tenant_access_token", return_value="tok"),
+            mock.patch.object(
+                feishu, "guarded_request", return_value=(200, b'{"code": 0}')
+            ) as mk,
+        ):
+            feishu.send_app_text("cli_a", "s1", t, "hi")
+        path = mk.call_args.args[2]
+        self.assertTrue(path.endswith("receive_id_type=open_id"), path)
+        body = json.loads(mk.call_args.kwargs["body"].decode("utf-8"))
+        self.assertEqual(body["receive_id"], "ou_x1")
+        self.assertEqual(body["msg_type"], "text")
+        # content 为字符串化的 JSON（飞书 im/v1 协议要求）
+        self.assertEqual(json.loads(body["content"]), {"text": "hi"})
+
+    def test_p15_upload_image_multipart(self):
+        png = os.path.join(TEST_ROOT, "p15.png")
+        Path(png).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 500)
+        resp = json.dumps({"code": 0, "data": {"image_key": "img_k"}}).encode()
+        with (
+            mock.patch.object(feishu, "tenant_access_token", return_value="tok"),
+            mock.patch.object(feishu, "guarded_request", return_value=(200, resp)) as mk,
+        ):
+            key = feishu.upload_image("cli_a", "s1", png)
+        self.assertEqual(key, "img_k")
+        body = mk.call_args.kwargs["body"]
+        self.assertIn(b'name="image_type"', body)
+        self.assertIn(b'name="image"', body)
+        self.assertIn(
+            "multipart/form-data; boundary=",
+            mk.call_args.kwargs["headers"]["Content-Type"],
+        )
+
+    def test_p16_list_chats(self):
+        resp = json.dumps(
+            {
+                "code": 0,
+                "data": {
+                    "items": [
+                        {"chat_id": "oc_1", "name": "A群"},
+                        {"chat_id": "oc_2", "name": "B群"},
+                    ]
+                },
+            }
+        ).encode()
+        with (
+            mock.patch.object(feishu, "tenant_access_token", return_value="tok"),
+            mock.patch.object(feishu, "guarded_request", return_value=(200, resp)),
+        ):
+            out = feishu.list_chats("cli_a", "s1")
+        self.assertEqual(out, [("oc_1", "A群"), ("oc_2", "B群")])
+
+
+# ======================= 通用推送目标识别与行解析（oil_1010） =======================
+
+
+class TestPushTarget(unittest.TestCase):
+    """通用目标串识别器：平台格式自动分类、群/私语义校验。"""
+
+    def test_t01_digits_to_umo_by_list(self):
+        t, err = pushtarget.resolve_target("10001", group=True)
+        self.assertEqual(err, "")
+        self.assertEqual(t["kind"], "umo")
+        self.assertEqual(t["identity"], "default:GroupMessage:10001")
+        t, err = pushtarget.resolve_target("10001", group=False)
+        self.assertEqual(t["identity"], "default:FriendMessage:10001")
+
+    def test_t02_umo_passthrough_any_platform(self):
+        t, _ = pushtarget.resolve_target("telegram:GroupMessage:900", group=True)
+        self.assertEqual(t["kind"], "umo")
+        self.assertEqual(t["identity"], "telegram:GroupMessage:900")
+
+    def test_t03_webhook_with_secret(self):
+        t, err = pushtarget.resolve_target(
+            "https://open.feishu.cn/open-apis/bot/v2/hook/abc##SEC", group=True
+        )
+        self.assertEqual(err, "")
+        self.assertEqual(t["kind"], "feishu_webhook")
+        self.assertEqual(t["feishu"]["secret"], "SEC")
+        self.assertEqual(
+            t["identity"], "https://open.feishu.cn/open-apis/bot/v2/hook/abc##SEC"
+        )
+
+    def test_t04_non_official_host_rejected(self):
+        t, err = pushtarget.resolve_target("https://evil.com/hook/x", group=True)
+        self.assertIsNone(t)
+        self.assertTrue(err)
+
+    def test_t05_app_kinds_and_list_semantics(self):
+        t, err = pushtarget.resolve_target("oc_g1", group=True)
+        self.assertEqual(t["kind"], "feishu_app")
+        t, err = pushtarget.resolve_target("oc_g1", group=False)
+        self.assertIsNone(t)
+        self.assertIn("群目标", err)
+        t, err = pushtarget.resolve_target("ou_x1", group=False)
+        self.assertEqual(t["kind"], "feishu_app")
+        t, err = pushtarget.resolve_target("ou_x1", group=True)
+        self.assertIsNone(t)
+        self.assertIn("个人目标", err)
+        t, err = pushtarget.resolve_target("13800138000", group=False)
+        self.assertEqual(t["feishu"]["kind"], "mobile")
+        t, err = pushtarget.resolve_target("a@b.co", group=False)
+        self.assertEqual(t["feishu"]["kind"], "email")
+
+    def test_t06_invalid(self):
+        for raw in ("", "hello", "ou", "oc", "a@"):
+            t, _err = pushtarget.resolve_target(raw, group=True)
+            self.assertIsNone(t, raw)
+
+
+class TestPushRows(unittest.TestCase):
+    """通用目标行解析：调度覆盖、限额、Web 载荷往返与校验。"""
+
+    def setUp(self):
+        self.prefs = Prefs(base_config())
+
+    def test_q01_rows_parse_and_kinds(self):
+        self.prefs.config["basic"]["push_group_targets"] = [
+            {
+                "id": "https://open.feishu.cn/open-apis/bot/v2/hook/abc##SEC",
+                "frequency": "",
+                "time": "",
+                "limit": None,
+            },
+            {"id": "oc_g1", "frequency": "", "time": "", "limit": None},
+        ]
+        self.prefs.config["basic"]["push_private_targets"] = [
+            {"id": "ou_x1", "frequency": "daily", "time": "20:30", "limit": None},
+            {"id": "13800138000", "frequency": "", "time": "", "limit": None},
+        ]
+        rows = self.prefs.push_rows()
+        kinds = [r["kind"] for r in rows]
+        self.assertEqual(
+            kinds, ["feishu_webhook", "feishu_app", "feishu_app", "feishu_app"]
+        )
+        self.assertEqual(rows[0]["feishu"]["secret"], "SEC")
+        self.assertEqual(rows[2]["hour"], 20)
+        self.assertEqual(rows[2]["minute"], 30)
+        self.assertTrue(rows[2]["sched_override"])
+        self.assertFalse(rows[0]["sched_override"])
+
+    def test_q02_invalid_rows_skipped(self):
+        self.prefs.config["basic"]["push_group_targets"] = [
+            {"id": "https://evil.com/hook/x", "frequency": "", "time": "", "limit": None},
+            {"id": "hello", "frequency": "", "time": "", "limit": None},
+        ]
+        self.assertEqual(self.prefs.push_rows(), [])
+
+    def test_q03_web_roundtrip(self):
+        payload = {
+            "provinces": ["江苏"],
+            "push_hour": 8,
+            "push_minute": 0,
+            "push_group_targets": [
+                {
+                    "id": "https://open.feishu.cn/open-apis/bot/v2/hook/abc",
+                    "frequency": "",
+                    "time": "",
+                    "limit": None,
+                }
+            ],
+            "push_private_targets": [
+                {"id": "ou_x1", "frequency": "weekly:4", "time": "12:30", "limit": None}
+            ],
+            "feishu_app_id": "cli_a",
+            "feishu_app_secret": "s1",
+        }
+        # 其余必填字段从 web_payload 缺省补齐（模拟页面提交）
+        payload = {**self.prefs.web_payload(), **payload}
+        self.assertEqual(self.prefs.apply_web_update(payload), [])
+        b = self.prefs.config["basic"]
+        self.assertEqual(
+            b["push_group_targets"],
+            [
+                {
+                    "id": "https://open.feishu.cn/open-apis/bot/v2/hook/abc",
+                    "frequency": "",
+                    "time": "",
+                    "limit": None,
+                }
+            ],
+        )
+        self.assertEqual(
+            b["push_private_targets"],
+            [{"id": "ou_x1", "frequency": "weekly:4", "time": "12:30", "limit": None}],
+        )
+        self.assertEqual(self.prefs.config["api"]["feishu_app_id"], "cli_a")
+        # 往返再读：行与凭证保持一致
+        p = self.prefs.web_payload()
+        self.assertEqual(p["push_group_targets"], b["push_group_targets"])
+        self.assertEqual(p["push_private_targets"], b["push_private_targets"])
+        self.assertTrue(p["feishu_app_ready"])
+
+    def test_q04_validation_errors(self):
+        payload = {**self.prefs.web_payload()}
+        payload.update(
+            {
+                "push_group_targets": [
+                    {
+                        "id": "https://evil.com/hook",
+                        "frequency": "",
+                        "time": "",
+                        "limit": None,
+                    },
+                    {"id": "10001", "frequency": "hourly", "time": "", "limit": None},
+                    {"id": "10002", "frequency": "", "time": "25:00", "limit": None},
+                    {"id": "10003", "frequency": "", "time": "", "limit": -5},
+                    {"id": "10003", "frequency": "", "time": "", "limit": "很多"},
+                ],
+                "feishu_app_id": "cli_a",
+                "feishu_app_secret": "",
+            }
+        )
+        errs = self.prefs.apply_web_update(payload)
+        self.assertTrue(any("webhook" in e for e in errs))
+        self.assertTrue(any("频率" in e for e in errs))
+        self.assertTrue(any("时刻" in e for e in errs))
+        self.assertTrue(any("限额" in e for e in errs))
+        self.assertTrue(any("整数" in e for e in errs))
+        self.assertTrue(any("成对" in e for e in errs))
+        # 校验失败不落盘：默认行保持不变
+        self.assertEqual(
+            self.prefs.config["basic"]["push_group_targets"],
+            [{"id": "10001", "frequency": "", "time": "", "limit": None}],
+        )
+
+    def test_q05_defaults_and_payload_shape(self):
+        p = self.prefs.web_payload()
+        self.assertEqual(p["push_frequency"], "daily")
+        self.assertEqual((p["push_hour"], p["push_minute"]), (9, 0))
+        self.assertEqual(
+            p["push_group_targets"],
+            [{"id": "10001", "frequency": "", "time": "", "limit": None}],
+        )
+        self.assertEqual(p["push_private_targets"], [])
+        self.assertFalse(p["feishu_app_ready"])
+        # 默认行继承全局调度
+        rows = self.prefs.push_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["identity"], "default:GroupMessage:10001")
+        self.assertEqual(rows[0]["frequency"], "daily")
+        self.assertEqual((rows[0]["hour"], rows[0]["minute"]), (9, 0))
+
+
+# ======================= 会话记录与订阅（oil_1010） =======================
+
+
+class TestSeenSessions(unittest.TestCase):
+    """见过的会话记录（Store 层）。"""
+
+    def setUp(self):
+        d = os.path.join(TEST_ROOT, "sessions", self.id().split(".")[-1])
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d, exist_ok=True)
+        self.store = Store(
+            os.path.join(d, "history.json"),
+            os.path.join(d, "quota.json"),
+            os.path.join(d, "events.json"),
+            os.path.join(d, "seen_sessions.json"),
+        )
+
+    def test_s01_record_and_list(self):
+        """记录去重、label 更新、bot/kind 解析、按最近活跃排序。"""
+        self.store.record_seen_session("default:GroupMessage:10001", "小明")
+        self.store.record_seen_session("lark:FriendMessage:ou_x", "")
+        self.store.record_seen_session("default:GroupMessage:10001", "小红")
+        sessions = self.store.all_seen_sessions()
+        self.assertEqual(len(sessions), 2)
+        self.assertEqual(sessions[0]["umo"], "default:GroupMessage:10001")  # 最近活跃在前
+        self.assertEqual(sessions[0]["label"], "小红")
+        self.assertEqual(sessions[0]["bot"], "default")
+        self.assertEqual(sessions[0]["kind"], "group")
+        lark = next(s for s in sessions if s["bot"] == "lark")
+        self.assertEqual(lark["kind"], "private")
+
+    def test_s02_cap_keep_latest(self):
+        """滚动保留：超上限移除最旧会话。"""
+        for i in range(205):
+            self.store.record_seen_session(f"p:GroupMessage:g{i}", "")
+        self.store.record_seen_session("p:GroupMessage:g204", "活跃")
+        sessions = self.store.all_seen_sessions()
+        self.assertLessEqual(len(sessions), 200)
+        self.assertIn("p:GroupMessage:g204", {s["umo"] for s in sessions})
+        self.assertNotIn("p:GroupMessage:g0", {s["umo"] for s in sessions})
+
+
+class TestSeenSessionHandlers(unittest.IsolatedAsyncioTestCase):
+    """消息记录器、订阅/退订指令与 sessions API。"""
+
+    async def test_s03_recorder_writes_and_throttles(self):
+        pl, _ctx, _cfg = make_plugin(name="s03")
+        ev = MockEvent()
+        await pl.record_seen_session(ev)
+        sessions = pl.store.all_seen_sessions()
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]["umo"], "default:GroupMessage:10001")
+        self.assertIn("default:GroupMessage:10001", pl._seen_flushed)
+        # 同会话限频窗口内再触发：不重复落盘（时间戳不变即未重写）
+        first = sessions[0]["last"]
+        await pl.record_seen_session(ev)
+        again = pl.store.all_seen_sessions()[0]["last"]
+        self.assertEqual(first, again)
+
+    async def test_s04_subscribe_unsubscribe_roundtrip(self):
+        pl, _ctx, cfg = make_plugin(name="s04")
+        ev = MockEvent(umo="lark:GroupMessage:oc_new")
+        out = await run_cmd(pl.push_subscribe_cmd(ev))
+        self.assertIn("已订阅", out[-1]["text"])
+        rows = cfg["basic"]["push_group_targets"]
+        self.assertIn(
+            {"id": "lark:GroupMessage:oc_new", "frequency": "", "time": "", "limit": None},
+            rows,
+        )
+        # 重复订阅提示已在
+        out = await run_cmd(pl.push_subscribe_cmd(ev))
+        self.assertIn("无需重复订阅", out[-1]["text"])
+        # 退订移除该行
+        out = await run_cmd(pl.push_unsubscribe_cmd(ev))
+        self.assertIn("已退订", out[-1]["text"])
+        self.assertNotIn(
+            "lark:GroupMessage:oc_new",
+            [r["id"] for r in cfg["basic"]["push_group_targets"]],
+        )
+        out = await run_cmd(pl.push_unsubscribe_cmd(ev))
+        self.assertIn("无需退订", out[-1]["text"])
+
+    async def test_s05_private_subscribe_goes_to_priv_list(self):
+        pl, _ctx, cfg = make_plugin(name="s05")
+        ev = MockEvent(umo="lark:FriendMessage:ou_p1")
+        out = await run_cmd(pl.push_subscribe_cmd(ev))
+        self.assertIn("已订阅", out[-1]["text"])
+        self.assertIn(
+            "lark:FriendMessage:ou_p1",
+            [r["id"] for r in cfg["basic"]["push_private_targets"]],
+        )
+
+    async def test_s06_sessions_api_registered_and_payload(self):
+        pl, ctx, _cfg = make_plugin(name="s06")
+        routes = [r[0] for r in ctx.apis]
+        self.assertIn("/astrbot_plugin_oil_price/sessions/list", routes)
+        pl.store.record_seen_session("default:GroupMessage:10001", "小明")
+        resp = await pl._web_sessions_list()
+        data = json.loads(resp.body)
+        self.assertEqual(data["sessions"][0]["umo"], "default:GroupMessage:10001")
+        self.assertEqual(data["sessions"][0]["bot"], "default")
 
 
 # ======================= 真实 API 冒烟（可选） =======================

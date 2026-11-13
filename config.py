@@ -1,20 +1,25 @@
 """配置访问与校验（Prefs）：插件配置的唯一读写入口。
 
-只依赖 modules.constants；main.py 的指令与 Web API 均经由本模块取值/写入。
+依赖 modules.constants 与 modules.pushtarget（通用目标串识别）；
+main.py 的指令与 Web API 均经由本模块取值/写入。
 """
 
 import logging
+import re
 
+from .modules import pushtarget
 from .modules.constants import (
     DATASOURCE,
     DEFAULT_FUELS,
     DEFAULT_PROVINCE,
     FUEL_ORDER,
-    GROUP_TARGET_PREFIX,
-    PRIVATE_TARGET_PREFIX,
     PROVINCES,
     REGISTER_URL,
 )
+
+# 行内调度覆盖格式：weekly:N（N=0~6）与 HH:MM
+_ROW_WEEKLY_RE = re.compile(r"^weekly:([0-6])$")
+_ROW_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 _log = logging.getLogger(__name__)
 _on_change_warned = False
@@ -141,6 +146,104 @@ class Prefs:
     def monthly_push_enabled(self) -> bool:
         return bool(self._get("basic", "monthly_push", True))
 
+    # ---------- 通用推送目标行（oil_1010：不区分平台，格式识别 + 调度覆盖） ----------
+
+    def feishu_app_id(self) -> str:
+        return str(self._get("api", "feishu_app_id", "") or "").strip()
+
+    def feishu_app_secret(self) -> str:
+        return str(self._get("api", "feishu_app_secret", "") or "").strip()
+
+    def feishu_app_ready(self) -> bool:
+        """自建应用凭证是否成对就绪（feishu_app 类目标可收海报图片的前提）。"""
+        return bool(self.feishu_app_id() and self.feishu_app_secret())
+
+    def push_rows(self) -> list:
+        """解析并校验后的推送目标行（群聊在前、个人在后）。
+
+        行字段：raw/kind/identity/umo/feishu + frequency/weekday/hour/minute/limit；
+        行内 frequency/time 留空跟随全局默认调度，非法行记日志跳过。
+        """
+        rows = []
+        for key, group in (
+            ("push_group_targets", True),
+            ("push_private_targets", False),
+        ):
+            raw = self._get("basic", key, []) or []
+            for item in raw if isinstance(raw, list) else []:
+                row = self._parse_push_row(item, group)
+                if row:
+                    rows.append(row)
+        return rows
+
+    def _parse_push_row(self, item, group: bool):
+        """单行配置 → 解析后的目标行；非法行返回 None 并记日志。"""
+        if not isinstance(item, dict):
+            _log.warning("[油价插件] 推送目标行格式不正确，已跳过")
+            return None
+        t, err = pushtarget.resolve_target(str(item.get("id") or ""), group=group)
+        if not t:
+            _log.warning(
+                f"[油价插件] 推送目标行已跳过：{err}（{str(item.get('id'))[:24]}）"
+            )
+            return None
+        freq_raw = str(item.get("frequency") or "").strip()
+        freq, weekday = self._resolve_row_freq(freq_raw)
+        time_raw = str(item.get("time") or "").strip()
+        hour, minute = self._resolve_row_time(time_raw)
+        limit = None
+        if item.get("limit") not in (None, ""):
+            try:
+                limit = max(0, int(item.get("limit")))
+            except (TypeError, ValueError):
+                limit = None
+        return {
+            "raw": t["raw"],
+            "kind": t["kind"],
+            "identity": t["identity"],
+            "umo": t["umo"],
+            "feishu": t["feishu"],
+            "frequency": freq,
+            "weekday": weekday,
+            "hour": hour,
+            "minute": minute,
+            "limit": limit,
+            "sched_override": bool(freq_raw or time_raw),
+        }
+
+    def _resolve_row_freq(self, freq_raw: str):
+        """行内频率：''=跟随全局默认；daily/off；weekly:N（N=0~6）；非法回退默认。"""
+        if not freq_raw:
+            return self.push_frequency(), self.push_weekday()
+        if freq_raw in ("daily", "off"):
+            return freq_raw, 0
+        m = _ROW_WEEKLY_RE.fullmatch(freq_raw)
+        if m:
+            return "weekly", int(m.group(1))
+        _log.warning(f"[油价插件] 推送目标行频率非法（{freq_raw}），回退全局默认")
+        return self.push_frequency(), self.push_weekday()
+
+    def _resolve_row_time(self, time_raw: str):
+        """行内时刻：''=跟随全局默认；HH:MM；非法回退默认。"""
+        if not time_raw:
+            return self.push_time()
+        m = _ROW_TIME_RE.fullmatch(time_raw)
+        if not m:
+            _log.warning(f"[油价插件] 推送目标行时刻非法（{time_raw}），回退全局默认")
+            return self.push_time()
+        return int(m.group(1)), int(m.group(2))
+
+    def push_row_identities(self) -> list:
+        """全部目标行的标识串（去重状态清理与展示排序用）。"""
+        return [r["identity"] for r in self.push_rows()]
+
+    def quota_limit_for(self, umo: str) -> int:
+        """查询配额解析：该会话对应的推送行单独限额优先，否则全局默认。"""
+        for row in self.push_rows():
+            if row["kind"] == "umo" and row["umo"] == umo and row["limit"] is not None:
+                return row["limit"]
+        return self.user_daily_limit()
+
     def user_daily_limit(self) -> int:
         """全局默认每人每日查询上限（目标未单独限额时使用）。"""
         try:
@@ -148,96 +251,30 @@ class Prefs:
         except (TypeError, ValueError):
             return 5
 
-    # ---------- 推送目标与限额（目标绑定） ----------
-
-    def _to_umo(self, target_id: str, kind: str):
-        """QQ 号/群号 → UMO；完整 UMO 原样；无法识别返回 None。"""
-        t = str(target_id or "").strip()
-        if not t:
-            return None
-        if ":" in t:
-            return t
-        if t.isdigit():
-            prefix = GROUP_TARGET_PREFIX if kind == "group" else PRIVATE_TARGET_PREFIX
-            return prefix + t
-        return None
-
-    def _stored_target_limits(self) -> dict:
-        """读取已持久化的 {UMO: limit}，过滤非法项。"""
-        raw = self._get("basic", "target_limits", {}) or {}
-        if not isinstance(raw, dict):
-            return {}
-        out = {}
-        for umo, limit in raw.items():
-            try:
-                value = int(limit)
-            except (TypeError, ValueError):
-                continue
-            if value >= 0:
-                out[str(umo)] = value
-        return out
-
-    def _structured_targets(self, key: str, kind: str):
-        """读取目标列表，并合并持久化单独限额，返回 ([umo...], {umo: limit})。"""
-        raw = self._get("basic", key, []) or []
-        stored_limits = self._stored_target_limits()
-        ids, limits = [], {}
-        for item in raw if isinstance(raw, list) else []:
-            if isinstance(item, dict):
-                umo = self._to_umo(item.get("id"), kind)
-                lim = item.get("limit", stored_limits.get(umo) if umo else None)
-            else:  # 兼容旧字符串列表
-                umo = self._to_umo(item, kind)
-                lim = stored_limits.get(umo) if umo else None
-            if not umo or umo in ids:
-                continue
-            ids.append(umo)
-            try:
-                lim_i = int(lim) if lim is not None and lim != "" else None
-            except (TypeError, ValueError):
-                lim_i = None
-            if lim_i is not None and lim_i >= 0:
-                limits[umo] = lim_i
-        return ids, limits
-
-    def notify_targets(self) -> list:
-        """推送目标（群聊在前）。"""
-        ids_g, _ = self._structured_targets("notify_group", "group")
-        ids_p, _ = self._structured_targets("notify_private", "private")
-        return ids_g + ids_p
-
-    def target_limits(self) -> dict:
-        """每个推送目标的单独每日上限 {UMO: limit}。"""
-        _, limits = self._structured_targets("notify_group", "group")
-        _, limits_p = self._structured_targets("notify_private", "private")
-        limits.update(limits_p)
-        return limits
-
-    def quota_limit_for(self, umo: str) -> int:
-        """查询配额解析：目标单独限额优先，否则全局默认。"""
-        limits = self.target_limits()
-        if umo and umo in limits:
-            return limits[umo]
-        return self.user_daily_limit()
-
     # ---------- Web 载荷 ----------
+
+    def _stored_push_rows(self, key: str) -> list:
+        """读取已存储的目标行（规整为 {id, frequency, time, limit} 展示形状）。"""
+        raw = self._get("basic", key, []) or []
+        out = []
+        for item in raw if isinstance(raw, list) else []:
+            if not isinstance(item, dict):
+                continue
+            limit = item.get("limit")
+            if limit in ("", None):
+                limit = None
+            out.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "frequency": str(item.get("frequency") or ""),
+                    "time": str(item.get("time") or ""),
+                    "limit": limit,
+                }
+            )
+        return out
 
     def web_payload(self) -> dict:
         hour, minute = self.push_time()
-        _, limits_g = self._structured_targets("notify_group", "group")
-        _, limits_p = self._structured_targets("notify_private", "private")
-
-        def display(umo, prefix):
-            return umo.removeprefix(prefix)
-
-        priv = [
-            {"id": display(u, PRIVATE_TARGET_PREFIX), "limit": limits_p.get(u)}
-            for u in self._structured_targets("notify_private", "private")[0]
-        ]
-        group = [
-            {"id": display(u, GROUP_TARGET_PREFIX), "limit": limits_g.get(u)}
-            for u in self._structured_targets("notify_group", "group")[0]
-        ]
         return {
             "provinces": self.provinces(),
             "push_hour": hour,
@@ -250,12 +287,15 @@ class Prefs:
             "gen_enable": self.gen_enable(),
             "gen_cache": self.gen_cache(),
             "gen_model": self.gen_model(),
-            "private_targets": priv,
-            "group_targets": group,
+            "push_group_targets": self._stored_push_rows("push_group_targets"),
+            "push_private_targets": self._stored_push_rows("push_private_targets"),
             "user_daily_limit": self.user_daily_limit(),
             "default_fuels": self.default_fuels(),
             "app_key": self.app_key(),
             "app_key_ready": self.app_key_ready(),
+            "feishu_app_id": self.feishu_app_id(),
+            "feishu_app_secret": self.feishu_app_secret(),
+            "feishu_app_ready": self.feishu_app_ready(),
             "datasource": DATASOURCE,
             "register_url": REGISTER_URL,
             "province_options": PROVINCES,
@@ -339,44 +379,52 @@ class Prefs:
         )
         gen_model = str(payload.get("gen_model", "") or "").strip()
 
-        # 推送目标（结构化：[{id, limit}]，limit 可空=用全局默认）
-        def _structured(key, kind, label):
+        # 通用推送目标行（oil_1010）：{id, frequency, time, limit}，
+        # id 格式自动识别平台；frequency/time 留空跟随全局默认调度
+        def _push_row_list(key, group, label):
             rows = payload.get(key)
-            if rows is None:
-                rows = []
-            if not isinstance(rows, list):
-                errors.append(f"{label}格式不正确")
-                return [], {}
-            ids, limits = [], {}
+            rows = rows if isinstance(rows, list) else []
+            out, seen = [], set()
             for row in rows:
-                tid = str((row or {}).get("id", "") or "").strip()
+                if not isinstance(row, dict):
+                    errors.append(f"{label}格式不正确")
+                    continue
+                tid = str(row.get("id") or "").strip()
                 if not tid:
                     continue
-                umo = self._to_umo(tid, kind)
-                if not umo:
-                    errors.append(
-                        f"{label}目标“{tid}”无法识别（应为 QQ 号/群号或完整 UMO）"
-                    )
+                t, err = pushtarget.resolve_target(tid, group=group)
+                if not t:
+                    errors.append(f"{label}「{tid[:24]}」{err}")
                     continue
-                if umo in ids:
+                freq = str(row.get("frequency") or "").strip()
+                if freq not in ("", "daily", "off") and not _ROW_WEEKLY_RE.fullmatch(freq):
+                    errors.append(f"{label}「{tid[:16]}」频率需为 留空/每日/每周N/关闭")
                     continue
-                ids.append(umo)
-                lim = (row or {}).get("limit", None)
-                if lim in ("", None):
+                time_s = str(row.get("time") or "").strip()
+                if time_s and not _ROW_TIME_RE.fullmatch(time_s):
+                    errors.append(f"{label}「{tid[:16]}」时刻格式需为 HH:MM 或留空")
                     continue
-                try:
-                    lim_i = int(lim)
-                except (TypeError, ValueError):
-                    errors.append(f"目标“{tid}”的限额必须是整数")
+                lim = row.get("limit")
+                lim_i = None
+                if lim not in (None, ""):
+                    try:
+                        lim_i = int(lim)
+                    except (TypeError, ValueError):
+                        errors.append(f"{label}「{tid[:16]}」的限额必须是整数")
+                        continue
+                    if lim_i < 0:
+                        errors.append(f"{label}「{tid[:16]}」的限额不能为负数")
+                        continue
+                if t["identity"] in seen:
                     continue
-                if lim_i < 0:
-                    errors.append(f"目标“{tid}”的限额不能为负数")
-                    continue
-                limits[umo] = lim_i
-            return ids, limits
+                seen.add(t["identity"])
+                out.append(
+                    {"id": t["raw"], "frequency": freq, "time": time_s, "limit": lim_i}
+                )
+            return out
 
-        priv_ids, priv_limits = _structured("private_targets", "private", "私聊推送目标")
-        group_ids, group_limits = _structured("group_targets", "group", "群聊推送目标")
+        group_rows = _push_row_list("push_group_targets", True, "群聊推送目标")
+        priv_rows = _push_row_list("push_private_targets", False, "个人推送目标")
 
         # 每日上限（全局默认）
         try:
@@ -403,6 +451,12 @@ class Prefs:
         # appKey
         app_key = str(payload.get("app_key", "") or "").strip()
 
+        # 飞书自建应用凭证（成对校验）
+        f_app_id = str(payload.get("feishu_app_id", "") or "").strip()
+        f_app_secret = str(payload.get("feishu_app_secret", "") or "").strip()
+        if bool(f_app_id) != bool(f_app_secret):
+            errors.append("飞书 app_id 与 app_secret 需成对填写")
+
         if errors:
             return errors
 
@@ -416,18 +470,18 @@ class Prefs:
             basic["change_remind_days"] = remind
         basic["auto_provinces"] = auto_prov
         basic["monthly_push"] = monthly
-        basic["notify_private"], basic["notify_group"] = priv_ids, group_ids
-        target_limits = {}
-        target_limits.update(group_limits)
-        target_limits.update(priv_limits)
-        basic["target_limits"] = target_limits
         basic["user_daily_limit"] = limit
         basic["default_fuels"] = cleaned_fuel
+        # 通用推送目标行（oil_1010：平台由目标串格式识别，调度行内可覆盖）
+        basic["push_group_targets"] = group_rows
+        basic["push_private_targets"] = priv_rows
         api = self._section("api")
         api["app_key"] = app_key
         api["gen_enable"] = gen_enable
         api["gen_cache"] = gen_cache
         api["gen_model"] = gen_model
+        api["feishu_app_id"] = f_app_id
+        api["feishu_app_secret"] = f_app_secret
         return []
 
     def save(self) -> None:

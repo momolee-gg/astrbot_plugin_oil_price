@@ -5,6 +5,17 @@ class AstrMessageEvent:
     pass
 
 
+class EventMessageType:
+    ALL = "all"
+    PRIVATE_MESSAGE = "private"
+    GROUP_MESSAGE = "group"
+
+
+class PermissionType:
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
 class _Filter:
     def command(self, *args, **kwargs):
         def deco(fn):
@@ -18,8 +29,21 @@ class _Filter:
 
         return deco
 
+    def event_message_type(self, *args, **kwargs):
+        def deco(fn):
+            return fn
+
+        return deco
+
+    def permission_type(self, *args, **kwargs):
+        def deco(fn):
+            return fn
+
+        return deco
+
 
 filter = _Filter()
+filter.PermissionType = PermissionType
 
 
 class MessageChain:

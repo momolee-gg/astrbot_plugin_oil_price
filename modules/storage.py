@@ -1,4 +1,4 @@
-"""本地存储：查询历史（按省按日）、用户每日配额、查询偏好事件。仅依赖标准库。"""
+"""本地存储：查询历史（按省按日）、用户每日配额、查询偏好事件、见过的会话。仅依赖标准库。"""
 
 import json
 import os
@@ -7,10 +7,17 @@ from pathlib import Path
 
 
 class Store:
-    def __init__(self, history_file: str, quota_file: str, events_file: str = ""):
+    def __init__(
+        self,
+        history_file: str,
+        quota_file: str,
+        events_file: str = "",
+        sessions_file: str = "",
+    ):
         self.history_file = history_file
         self.quota_file = quota_file
         self.events_file = events_file
+        self.sessions_file = sessions_file
 
     # ---------- 基础 ----------
 
@@ -191,6 +198,60 @@ class Store:
         data.pop(umo)
         self._save(self.events_file, data)
         return True
+
+    # ---------- 见过的会话记录（oil_1010：设置页「从记录会话选择」数据源） ----------
+
+    @staticmethod
+    def _session_kind(umo: str) -> str:
+        """从 UMO 中段解析群/私类型（主流适配器均为 GroupMessage/FriendMessage）。"""
+        if ":GroupMessage:" in umo:
+            return "group"
+        if ":FriendMessage:" in umo:
+            return "private"
+        return ""
+
+    def record_seen_session(self, umo: str, label: str, max_keep: int = 200):
+        """记录一条见过的会话（UMO + 最近发言者昵称），滚动保留 max_keep 条。
+
+        由主循环低频合并落盘（消息处理器只进内存队列），高频消息不产生逐条写盘。
+        """
+        if not self.sessions_file or not umo:
+            return
+        data = self._load(self.sessions_file)
+        sessions = data.get("sessions") or {}
+        prev = sessions.get(umo) or {}
+        sessions[umo] = {
+            "label": str(label or prev.get("label") or ""),
+            "kind": self._session_kind(umo),
+            "first": str(prev.get("first") or datetime.now().isoformat(timespec="seconds")),
+            "last": datetime.now().isoformat(timespec="seconds"),
+        }
+        if len(sessions) > max_keep:
+            oldest = sorted(sessions.items(), key=lambda kv: str(kv[1].get("last") or ""))
+            for old_umo, _ in oldest[: len(sessions) - max_keep]:
+                sessions.pop(old_umo, None)
+        data["sessions"] = sessions
+        self._save(self.sessions_file, data)
+
+    def all_seen_sessions(self) -> list:
+        """见过的会话列表（最近活跃在前）；bot=UMO 首段（适配器实例名）。"""
+        if not self.sessions_file:
+            return []
+        data = self._load(self.sessions_file)
+        sessions = data.get("sessions") or {}
+        out = [
+            {
+                "umo": umo,
+                "bot": umo.split(":", 1)[0] if ":" in umo else "",
+                "label": str(rec.get("label") or ""),
+                "kind": str(rec.get("kind") or ""),
+                "first": str(rec.get("first") or ""),
+                "last": str(rec.get("last") or ""),
+            }
+            for umo, rec in sessions.items()
+        ]
+        out.sort(key=lambda s: s["last"], reverse=True)
+        return out
 
 
 def pick_preferred_provinces(

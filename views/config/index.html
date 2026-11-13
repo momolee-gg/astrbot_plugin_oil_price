@@ -118,7 +118,9 @@
   /* 目标行编辑器 */
   .trow { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
   .trow .t-id { flex: 1; min-width: 0; }
-  .trow .t-limit { flex: 0 0 150px; }
+  .trow .t-freq { flex: 0 0 96px; }
+  .trow .t-time { flex: 0 0 118px; }
+  .trow .t-limit { flex: 0 0 110px; }
   .trow .t-del {
     flex: 0 0 30px; background: transparent; color: var(--err);
     border: 1px solid var(--line); border-radius: 7px; padding: 6px 0;
@@ -126,6 +128,30 @@
   }
   .trow .t-del:hover { background: color-mix(in srgb, var(--err) 12%, transparent); }
   .tadd { background: transparent; color: var(--chip-text); border: 1px dashed var(--line-strong); }
+
+  /* 会话选择面板（oil_1010）：机器人层 + 搜索 + 会话列表 */
+  .pick-panel {
+    margin-top: 10px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--panel); padding: 10px;
+  }
+  .pick-panel.hidden { display: none; }
+  .pick-bots { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .pick-bot {
+    background: transparent; color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 3px 12px; font-size: 12.5px; cursor: pointer;
+  }
+  .pick-bot:hover { background: var(--chip); }
+  .pick-bot.active { background: var(--chip); color: var(--chip-text); border-color: var(--chip-text); font-weight: 600; }
+  .pick-search { margin-bottom: 8px; }
+  .pick-list { max-height: 260px; overflow: auto; }
+  .session-item {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    border-radius: 8px; cursor: pointer; font-size: 13px;
+  }
+  .session-item:hover { background: var(--chip); }
+  .session-item b { font-weight: 600; white-space: nowrap; }
+  .session-umo { color: var(--sub); font-size: 12px; word-break: break-all; }
+  .session-empty { color: var(--sub); font-size: 13px; padding: 8px 4px; }
 
   /* 查询省份记忆管理 */
   .pref-empty { color: var(--sub); font-size: 13px; padding: 6px 0; }
@@ -224,8 +250,8 @@
     </div>
 
     <div class="field">
-      <div class="label">⏰ 推送时间</div>
-      <div class="hint">单省推送为「文字版 + 图片版」两条消息；多省仅推送图片版</div>
+      <div class="label">⏰ 默认推送时间</div>
+      <div class="hint">全局默认调度；单省推送为「文字版 + 图片版」两条消息，多省仅推送图片版。目标行未单独设置时刻时使用</div>
       <div class="inline">
         <div><select id="push_hour"></select></div>
         <div><select id="push_minute"></select></div>
@@ -233,8 +259,8 @@
     </div>
 
     <div class="field">
-      <div class="label">🔁 推送频率</div>
-      <div class="hint">每日 = 每天到点推送；每周 = 仅在每周推送日推送；关闭 = 不发常规推送，调价提醒与月度图不受影响（旧配置「有变动时」已并入调价提醒）</div>
+      <div class="label">🔁 默认推送频率</div>
+      <div class="hint">全局默认调度；目标行未单独设置频率时使用。每日 = 每天到点推送；每周 = 仅在每周推送日推送；关闭 = 不发常规推送，调价提醒与月度图不受影响</div>
       <div class="inline">
         <div>
           <select id="push_frequency">
@@ -301,17 +327,28 @@
     </div>
 
     <div class="field">
-      <div class="label">👤 私聊推送目标（绑定每日查询上限）</div>
-      <div class="hint">每行一个 QQ 号；限额留空 = 使用全局默认。该目标内用户的每日查询次数按此限额计量</div>
-      <div id="privRows"></div>
-      <button type="button" class="ghost tadd" id="privAdd">＋ 添加私聊目标</button>
+      <div class="label">👥 群聊推送目标（任意平台，通用格式）</div>
+      <div class="hint">每行一个目标，格式自动识别：QQ群号（纯数字）、完整 UMO（任意平台，格式 平台:消息类型:群号）、飞书群 webhook（地址##加签密钥）、飞书 chat_id（oc_…，可发 /飞书群列表 查询）。频率/时刻留空跟随上方默认调度；限额仅对 QQ 类目标参与每日查询配额计量</div>
+      <div id="groupRows"></div>
+      <button type="button" class="ghost tadd" id="groupAdd">＋ 添加群聊目标</button>
     </div>
 
     <div class="field">
-      <div class="label">👥 群聊推送目标（绑定每日查询上限）</div>
-      <div class="hint">每行一个群号；限额留空 = 使用全局默认。该群内用户的每日查询次数按此限额计量</div>
-      <div id="groupRows"></div>
-      <button type="button" class="ghost tadd" id="groupAdd">＋ 添加群聊目标</button>
+      <div class="label">👤 个人推送目标（任意平台，通用格式）</div>
+      <div class="hint">每行一个目标，格式自动识别：QQ号（纯数字）、完整 UMO、飞书 ou_ /手机号/邮箱（需在「接口配置」填写自建应用凭证，可收海报图片）。调度语义同群聊列表</div>
+      <div id="privRows"></div>
+      <button type="button" class="ghost tadd" id="privAdd">＋ 添加个人目标</button>
+    </div>
+
+    <div class="field">
+      <div class="label">📋 从记录会话选择（可选辅助）</div>
+      <div class="hint">插件运行期间见过的会话，按机器人分组；点选即添加为目标行（群/私自动归类，调度跟随默认）。仅含插件运行期间收过消息的会话；webhook/手机号等非 UMO 目标仍需手动添加</div>
+      <button type="button" class="ghost" id="sessionPickBtn">📋 展开会话列表</button>
+      <div id="sessionPickPanel" class="pick-panel hidden">
+        <div class="pick-bots" id="pickBots"></div>
+        <input type="text" id="sessionPickSearch" class="pick-search" placeholder="搜索群名 / 昵称 / UMO">
+        <div class="pick-list" id="sessionPickList"></div>
+      </div>
     </div>
 
     <div class="field">
@@ -359,6 +396,17 @@
       <div class="label">🎨 生图模型（兜底值）</div>
       <div class="hint">各生图端点优先使用该模型平台在 bot 里配置的模型名（如百炼 qwen-image-3.0、中转 gpt-image-2.5），未配置模型的端点才用这里的兜底值；全部不可用时不发图片，只发文字</div>
       <input type="text" id="gen_model" autocomplete="off" spellcheck="false" placeholder="qwen-image-3.0">
+    </div>
+
+    <div class="field">
+      <div class="label">🕊️ 飞书自建应用
+        <span class="badge ok" id="feishuAppBadge" style="display:none">已配置</span>
+      </div>
+      <div class="hint">飞书开放平台「企业自建应用」凭证，成对填写后飞书个人/群目标与海报图片推送才可用；应用需开通「获取与发送单聊、群组消息」权限（im:message），用手机号/邮箱定位用户还需「根据手机号或邮箱获取用户 ID」权限，并发布版本</div>
+      <div class="inline">
+        <div><input type="text" id="feishu_app_id" autocomplete="off" spellcheck="false" placeholder="cli_a5xxxxxx"></div>
+        <div><input type="text" id="feishu_app_secret" autocomplete="off" spellcheck="false" placeholder="应用 App Secret"></div>
+      </div>
     </div>
   </div>
 
@@ -437,30 +485,150 @@
   const statFuel = { selected: [], options: [] };
   let bridge = null;
 
-  function addTargetRow(containerId, t) {
+  // ---------- 通用推送目标行编辑器（oil_1010：任意平台目标串） ----------
+  function addPushRow(containerId, r, ph) {
     const row = document.createElement("div");
     row.className = "trow";
     row.innerHTML =
-      '<input class="t-id" type="text" autocomplete="off" spellcheck="false" placeholder="QQ号/群号">' +
-      '<input class="t-limit" type="number" min="0" step="1" placeholder="限额(留空=默认)">' +
+      '<input class="t-id" type="text" autocomplete="off" spellcheck="false" placeholder="' + ph + '">' +
+      '<select class="t-freq">' +
+        '<option value="">跟随默认</option>' +
+        '<option value="daily">每日</option>' +
+        '<option value="weekly:0">每周一</option>' +
+        '<option value="weekly:1">每周二</option>' +
+        '<option value="weekly:2">每周三</option>' +
+        '<option value="weekly:3">每周四</option>' +
+        '<option value="weekly:4">每周五</option>' +
+        '<option value="weekly:5">每周六</option>' +
+        '<option value="weekly:6">每周日</option>' +
+        '<option value="off">关闭</option>' +
+      '</select>' +
+      '<input class="t-time" type="time">' +
+      '<input class="t-limit" type="number" min="0" step="1" placeholder="限额(空=默认)">' +
       '<button type="button" class="t-del" title="删除">×</button>';
-    row.querySelector(".t-id").value = t.id || "";
-    if (t.limit !== null && t.limit !== undefined) row.querySelector(".t-limit").value = t.limit;
+    row.querySelector(".t-id").value = r.id || "";
+    row.querySelector(".t-freq").value = r.frequency || "";
+    row.querySelector(".t-time").value = r.time || "";
+    if (r.limit !== null && r.limit !== undefined) row.querySelector(".t-limit").value = r.limit;
     row.querySelector(".t-del").addEventListener("click", () => row.remove());
     $(containerId).appendChild(row);
   }
 
-  function collectTargets(containerId) {
+  function collectPushRows(containerId) {
     return Array.from($(containerId).querySelectorAll(".trow")).map((r) => ({
       id: r.querySelector(".t-id").value.trim(),
+      frequency: r.querySelector(".t-freq").value,
+      time: r.querySelector(".t-time").value,
       limit: r.querySelector(".t-limit").value === "" ? null
            : parseInt(r.querySelector(".t-limit").value, 10)
-    })).filter((t) => t.id);
+    })).filter((r) => r.id);
   }
 
+  const PUSH_GROUP_PH = "QQ群号 / 完整UMO / 飞书webhook或oc_";
+  const PUSH_PRIV_PH = "QQ号 / 完整UMO / ou_ / 手机号 / 邮箱";
+
   function initTargetEditors() {
-    $("privAdd").addEventListener("click", () => addTargetRow("privRows", {}));
-    $("groupAdd").addEventListener("click", () => addTargetRow("groupRows", {}));
+    $("privAdd").addEventListener("click", () => addPushRow("privRows", {}, PUSH_PRIV_PH));
+    $("groupAdd").addEventListener("click", () => addPushRow("groupRows", {}, PUSH_GROUP_PH));
+  }
+
+  // ---------- 会话选择面板（oil_1010：机器人层 + 搜索 + 点选填行） ----------
+  let seenSessions = [];
+  let pickBot = "";
+  let sessionsLoaded = false;
+
+  function escHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function renderPickBots() {
+    const bots = [];
+    seenSessions.forEach((s) => {
+      const b = s.bot || "未知";
+      if (!bots.includes(b)) bots.push(b);
+    });
+    const box = $("pickBots");
+    box.innerHTML = "";
+    const mk = (label, val) => {
+      const n = seenSessions.filter(
+        (s) => (val === "" ? true : (s.bot || "未知") === val)
+      ).length;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "pick-bot" + (pickBot === val ? " active" : "");
+      btn.textContent = label + "（" + n + "）";
+      btn.addEventListener("click", () => {
+        pickBot = val;
+        renderPickBots();
+        renderSessionList();
+      });
+      box.appendChild(btn);
+    };
+    mk("全部", "");
+    bots.forEach((b) => mk(b, b));
+  }
+
+  function renderSessionList() {
+    const box = $("sessionPickList");
+    box.innerHTML = "";
+    const kw = ($("sessionPickSearch").value || "").trim().toLowerCase();
+    const items = seenSessions.filter((s) => {
+      const bot = s.bot || "未知";
+      if (pickBot && bot !== pickBot) return false;
+      if (!kw) return true;
+      return (s.umo + " " + (s.label || "")).toLowerCase().includes(kw);
+    });
+    if (!items.length) {
+      box.innerHTML =
+        '<div class="session-empty">暂无记录（机器人收到消息后自动积累；可在目标会话里先随便说句话）</div>';
+      return;
+    }
+    items.forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "session-item";
+      const badge = s.kind === "group" ? "群聊" : (s.kind === "private" ? "私聊" : "会话");
+      row.innerHTML =
+        '<span class="chip">' + badge + '</span><b>' + escHtml(s.label || "未命名")
+        + '</b><span class="session-umo">' + escHtml(s.umo) + '</span>';
+      row.addEventListener("click", () => {
+        const target = s.kind === "group" ? "groupRows" : "privRows";
+        addPushRow(target, { id: s.umo, frequency: "", time: "", limit: null });
+        $("sessionPickPanel").classList.add("hidden");
+        setStatus("已添加目标行：" + (s.label || s.umo), "ok");
+      });
+      box.appendChild(row);
+    });
+  }
+
+  async function loadSessions(force) {
+    if (sessionsLoaded && !force) return;
+    try {
+      const res = await bridge.apiGet("sessions/list");
+      seenSessions = res.sessions || [];
+      sessionsLoaded = true;
+    } catch (e) {
+      seenSessions = [];
+    }
+  }
+
+  function initSessionPicker() {
+    $("sessionPickBtn").addEventListener("click", async () => {
+      const panel = $("sessionPickPanel");
+      if (!panel.classList.contains("hidden")) {
+        panel.classList.add("hidden");
+        return;
+      }
+      setStatus("加载会话记录…");
+      await loadSessions();
+      pickBot = "";
+      renderPickBots();
+      renderSessionList();
+      panel.classList.remove("hidden");
+      setStatus("");
+    });
+    $("sessionPickSearch").addEventListener("input", renderSessionList);
   }
 
   const waitForBridge = async () => {
@@ -585,8 +753,8 @@
     });
   }
 
-  function fillTimeSelects(hour, minute) {
-    const h = $("push_hour"), m = $("push_minute");
+  function fillTimeSelects(hour, minute, hId = "push_hour", mId = "push_minute") {
+    const h = $(hId), m = $(mId);
     h.innerHTML = ""; m.innerHTML = "";
     for (let i = 0; i < 24; i++) {
       const o = document.createElement("option");
@@ -602,8 +770,8 @@
     }
   }
 
-  function fillWeekdaySelect(selected) {
-    const w = $("push_weekday");
+  function fillWeekdaySelect(selected, wId = "push_weekday") {
+    const w = $(wId);
     w.innerHTML = "";
     const names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
     names.forEach((n, i) => {
@@ -636,11 +804,14 @@
     syncFrequencyUI();
     $("monthly_push").checked = cfg.monthly_push !== false;
     $("privRows").innerHTML = "";
-    (cfg.private_targets || []).forEach((t) => addTargetRow("privRows", t));
-    if (!(cfg.private_targets || []).length) addTargetRow("privRows", { id: "", limit: null });
+    (cfg.push_private_targets || []).forEach((t) => addPushRow("privRows", t, PUSH_PRIV_PH));
+    if (!(cfg.push_private_targets || []).length) addPushRow("privRows", {}, PUSH_PRIV_PH);
     $("groupRows").innerHTML = "";
-    (cfg.group_targets || []).forEach((t) => addTargetRow("groupRows", t));
-    if (!(cfg.group_targets || []).length) addTargetRow("groupRows", { id: "", limit: null });
+    (cfg.push_group_targets || []).forEach((t) => addPushRow("groupRows", t, PUSH_GROUP_PH));
+    if (!(cfg.push_group_targets || []).length) addPushRow("groupRows", {}, PUSH_GROUP_PH);
+    $("feishu_app_id").value = cfg.feishu_app_id || "";
+    $("feishu_app_secret").value = cfg.feishu_app_secret || "";
+    $("feishuAppBadge").style.display = cfg.feishu_app_ready ? "" : "none";
     $("user_daily_limit").value = cfg.user_daily_limit;
     cfgFuel.options = cfg.fuel_options || ["92", "95", "98", "0", "89"];
     cfgFuel.selected = (cfg.default_fuels || []).slice();
@@ -666,11 +837,13 @@
       gen_enable: $("gen_enable").checked,
       gen_cache: $("gen_cache").checked,
       gen_model: $("gen_model").value.trim(),
-      private_targets: collectTargets("privRows"),
-      group_targets: collectTargets("groupRows"),
+      push_group_targets: collectPushRows("groupRows"),
+      push_private_targets: collectPushRows("privRows"),
       user_daily_limit: parseInt($("user_daily_limit").value || "0", 10),
       default_fuels: cfgFuel.selected,
-      app_key: $("appkey").value.trim()
+      app_key: $("appkey").value.trim(),
+      feishu_app_id: $("feishu_app_id").value.trim(),
+      feishu_app_secret: $("feishu_app_secret").value.trim()
     };
   }
 
@@ -862,6 +1035,7 @@
            cfgFuel.options, cfgFuel, false, null, null);
     $("push_frequency").addEventListener("change", syncFrequencyUI);
     initTargetEditors();
+    initSessionPicker();
     initRegisterLink();
 
     try {
