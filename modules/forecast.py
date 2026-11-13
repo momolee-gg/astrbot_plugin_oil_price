@@ -20,12 +20,16 @@
 无法消除——预测仅供预警参考，文案须带「以发改委公告为准」。
 """
 
+import ipaddress
 import json
+import socket
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
 
 from .constants import USER_AGENT
+
+_ALLOWED_HOSTS = {"datacenter-web.eastmoney.com"}
 
 _TIMEOUT = 10
 _NYMEX_URL = (
@@ -76,10 +80,26 @@ class ForecastError(RuntimeError):
 
 
 def _http_json(url: str) -> dict:
+    """东财数据域限定（SSRF 守卫：https + 主机白名单 + 解析 IP 必须公网）。"""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "https" or (parsed.hostname or "") not in _ALLOWED_HOSTS:
+        raise ForecastError(f"不允许的预测数据源: {url}")
+    try:
+        infos = socket.getaddrinfo(
+            parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM
+        )
+    except OSError as e:
+        raise ForecastError(f"数据源解析失败: {e}") from e
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            raise ForecastError(f"数据源解析到非公网地址: {info[4][0]}")
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
+    except ForecastError:
+        raise
     except Exception as e:
         raise ForecastError(f"网络请求失败: {e}") from e
 
@@ -181,11 +201,12 @@ def _official_forecast(adj: dict) -> dict:
     else:
         direction = "rise" if per_ton > 0 else "drop"
     delta = {fuel: round(per_ton * coef, 2) for fuel, coef in L_COEF.items()}
-    if adj.get("cy_fd") is not None:
-        delta["0"] = round(adj["cy_fd"] * L_COEF["0"], 2)
+    cy_fd = adj.get("cy_fd")
+    delta["0"] = round(cy_fd * L_COEF["0"], 2) if cy_fd is not None else None
     return {
         "dir": direction,
         "per_ton": round(per_ton),
+        "per_ton_diesel": round(cy_fd) if cy_fd is not None else None,
         "delta": delta,
         "official": True,
         "est_date": "",  # 官方数无需测算基准

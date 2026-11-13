@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 
 
 class AstrBotConfig(dict):
@@ -24,5 +25,7 @@ class AstrBotConfig(dict):
         if not self.config_path:
             return
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        with open(self.config_path, "w", encoding="utf-8") as f:
-            json.dump(dict(self), f, ensure_ascii=False, indent=indent or 4)
+        Path(self.config_path).write_text(
+            json.dumps(dict(self), ensure_ascii=False, indent=indent or 4),
+            encoding="utf-8",
+        )

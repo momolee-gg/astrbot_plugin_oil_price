@@ -76,14 +76,18 @@ def adjust_countdown_text(next_time: str, direction: str = None, official=False)
         return f"距下次调价窗口（{d_str} 24时）还有 {days} 天"
     if days == 1:
         if direction == "rise":
-            return "明晚 24 时调价窗口开启！要加油的今晚抓紧"
+            word = "已公告涨价" if official else "预计涨价"
+            advice = "要加油的今晚抓紧"
+            return f"明晚 24 时调价窗口开启！{word}，{advice}"
         if direction == "drop":
             word = "已公告降价" if official else "预计降价"
             return f"明晚 24 时调价窗口开启！{word}，等明晚降价后再加更划算"
         return "明晚 24 时调价窗口开启"
     if days == 0:
         if direction == "rise":
-            return "就是今晚 24 时调价窗口开启！要加油的今晚抓紧"
+            word = "已公告涨价" if official else "预计涨价"
+            advice = "要加油的今晚抓紧"
+            return f"就是今晚 24 时调价窗口开启！{word}，{advice}"
         if direction == "drop":
             word = "已公告降价" if official else "预计降价"
             return f"就是今晚 24 时调价窗口开启！{word}，明天起加油更划算"
@@ -122,8 +126,9 @@ def _remind_fuel_line(
 ) -> str:
     """提醒价格行：现价 + 下次调价标注（oil_1008）。
 
-    delta 为下次调价每升调整额（带符号）。官方公告时标「↓降 0.51」，
-    测算时标「预计 ↓降约 0.51」；无预测或搁浅（delta 为 None/0）只报现价
+    delta 为下次调价每升调整额（带符号）。公告后每吨幅度已确认，
+    但每升值仍是按油号系数折算，标「↓降约 0.51」；公告前标
+    「预计 ↓降约 0.51」。无预测或搁浅（delta 为 None/0）只报现价
     ——提醒语境下绝不能再把上一次调价的涨跌额（数据源 change 字段）
     挂出来冒充下次调整。
     """
@@ -133,7 +138,7 @@ def _remind_fuel_line(
         return f"{name}：现价 {price:g} 元/升"
     arrow = "↑涨" if delta > 0 else "↓降"
     if official:
-        return f"{name}：现价 {price:g} 元/升（{arrow} {abs(delta):.2f}）"
+        return f"{name}：现价 {price:g} 元/升（{arrow}约 {abs(delta):.2f}）"
     return f"{name}：现价 {price:g} 元/升（预计 {arrow}约 {abs(delta):.2f}）"
 
 
@@ -142,11 +147,18 @@ def _forecast_notice(forecast: dict) -> str:
     被 genimage 行分类误归入数据面板。"""
     direction = forecast.get("dir")
     if direction == "flat":
+        if forecast.get("official"):
+            return "⚡ 官方公告：本轮调价搁浅，价格不作调整"
         # 50 元/吨与 forecast.FLAT_THRESHOLD 同源：搁浅线
         return "⚡ 预计本轮调价幅度不足 50 元/吨，大概率搁浅维持现价（以发改委公告为准）"
     word = "上调" if direction == "rise" else "下调"
     if forecast.get("official"):
-        return f"⚡ 官方公告：本轮每吨{word} {abs(int(forecast.get('per_ton') or 0))} 元，今晚 24 时起执行"
+        qy = abs(int(forecast.get("per_ton") or 0))
+        cy = forecast.get("per_ton_diesel")
+        notice = f"⚡ 官方公告：汽油每吨{word} {qy} 元"
+        if cy is not None:
+            notice += f"、柴油每吨{word} {abs(int(cy))} 元"
+        return notice + "，今晚 24 时起执行"
     return (
         f"⚡ 预计每吨{word}约 {abs(int(forecast.get('per_ton') or 0))} 元，以发改委公告为准"
     )

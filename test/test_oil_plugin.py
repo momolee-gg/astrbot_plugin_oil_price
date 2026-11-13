@@ -22,6 +22,7 @@ import sys
 import time
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 PLUGINS_DIR = "/AstrBot/data/plugins"
@@ -145,11 +146,11 @@ def _fake_genimage_generate(
     prompt, endpoints, model=None, size=None, out_dir="/tmp", name="gen.png"
 ):
     """生图假实现：不联网，直接落一张最小 PNG。"""
-    os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, name)
-    with open(path, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n" + b"0" * 2000)
-    return path
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / name
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 2000)
+    return str(path)
 
 
 def make_plugin(name="t", config=None, appkey="test-key-123"):
@@ -584,10 +585,31 @@ class TestDatasource(unittest.TestCase):
             datasource.fetch_province("江苏", "")
 
     def _run_with_resp(self, body: bytes):
-        with mock.patch.object(
-            datasource.urllib.request, "urlopen", return_value=FakeResp(body)
+        """模拟 SNI 直连链路：getaddrinfo → _SNIHTTPSConnection → 响应。"""
+        resp = mock.Mock()
+        resp.read.return_value = body
+        conn = mock.Mock()
+        conn.getresponse.return_value = resp
+        with (
+            mock.patch.object(
+                datasource.socket,
+                "getaddrinfo",
+                return_value=[(0, 0, 0, "", ("1.2.3.4", 443))],
+            ),
+            mock.patch.object(
+                datasource, "_SNIHTTPSConnection", return_value=conn
+            ) as mk_conn,
         ):
-            return datasource.fetch_province("江苏", "k")
+            data = datasource.fetch_province("江苏", "k")
+        # 连接目标必须是校验后的公网 IP，SNI/证书与 Host 头用原主机名
+        self.assertEqual(mk_conn.call_args.args[0], "1.2.3.4")
+        self.assertEqual(mk_conn.call_args.kwargs.get("sni"), "route.showapi.com")
+        self.assertEqual(mk_conn.call_args.kwargs.get("timeout"), datasource.API_TIMEOUT)
+        self.assertEqual(
+            conn.request.call_args.kwargs["headers"]["Host"],
+            "route.showapi.com",
+        )
+        return data
 
     def test_g02_normal_response(self):
         body = json.dumps(
@@ -627,7 +649,17 @@ class TestDatasource(unittest.TestCase):
 
     def test_g05_network_error(self):
         with mock.patch.object(
-            datasource.urllib.request, "urlopen", side_effect=OSError("超时")
+            datasource.socket, "getaddrinfo", side_effect=OSError("超时")
+        ):
+            with self.assertRaises(datasource.ShowApiError):
+                datasource.fetch_province("江苏", "k")
+
+    def test_g06_private_ip_rejected(self):
+        """SSRF 守卫：数据源解析到私网/环回地址时拒绝请求。"""
+        with mock.patch.object(
+            datasource.socket,
+            "getaddrinfo",
+            return_value=[(0, 0, 0, "", ("127.0.0.1", 443))],
         ):
             with self.assertRaises(datasource.ShowApiError):
                 datasource.fetch_province("江苏", "k")
@@ -767,6 +799,21 @@ class TestForecast(unittest.TestCase):
         with mock.patch.object(self.fc, "_http_json", side_effect=fake_http):
             out = self.fc.build_forecast("2026-10-20")  # 生效日=明天但缺幅度
         self.assertIsNone(out)
+
+    def test_http_json_host_allowlist(self):
+        """SSRF 守卫：仅东财数据域放行，其余主机拒绝且不发起请求。"""
+        with mock.patch.object(self.fc.urllib.request, "urlopen") as fake_open:
+            with self.assertRaises(self.fc.ForecastError):
+                self.fc._http_json("https://evil.example.com/api")
+            fake_open.assert_not_called()
+        # 白名单域正常走到 urlopen（用 mock 拦截网络）
+        with mock.patch.object(
+            self.fc.urllib.request,
+            "urlopen",
+            side_effect=self.fc.ForecastError("stop"),
+        ):
+            with self.assertRaises(self.fc.ForecastError):
+                self.fc._http_json(self.fc._NYMEX_URL)
 
     def test_fetch_error_raises(self):
         """_http_json 异常时底层保留 ForecastError，build_forecast 吞掉降级为 None。"""
@@ -1010,7 +1057,9 @@ class TestReporting(unittest.TestCase):
         eff1 = (d + timedelta(days=2)).strftime("%Y%m%d")  # 生效日=后天 → 明晚窗口
         eff0 = (d + timedelta(days=1)).strftime("%Y%m%d")  # 生效日=明天 → 今晚窗口
         eff7 = (d + timedelta(days=8)).strftime("%Y%m%d")  # 窗口还有 7 天
-        self.assertEqual(t(eff1, "rise"), "明晚 24 时调价窗口开启！要加油的今晚抓紧")
+        self.assertEqual(
+            t(eff1, "rise"), "明晚 24 时调价窗口开启！预计涨价，要加油的今晚抓紧"
+        )
         self.assertEqual(
             t(eff1, "drop"),
             "明晚 24 时调价窗口开启！预计降价，等明晚降价后再加更划算",
@@ -1023,7 +1072,7 @@ class TestReporting(unittest.TestCase):
         )
         self.assertEqual(
             t(eff0, "rise"),
-            "就是今晚 24 时调价窗口开启！要加油的今晚抓紧",
+            "就是今晚 24 时调价窗口开启！预计涨价，要加油的今晚抓紧",
         )
         self.assertEqual(t(eff0, None), "就是今晚 24 时！调价窗口开启")
         # days>1 与无窗口不受方向影响
@@ -1103,9 +1152,9 @@ class TestReporting(unittest.TestCase):
         row["next_change_time"] = eff0
         text = reporting.build_remind_text([("江苏", row)], fuels=["92", "95"], forecast=fc)
         self.assertIn("就是今晚 24 时调价窗口开启！已公告降价", text)
-        self.assertIn("92号汽油：现价 8.85 元/升（↓降 0.51）", text)
-        self.assertIn("95号汽油：现价 8.62 元/升（↓降 0.54）", text)
-        self.assertIn("⚡ 官方公告：本轮每吨下调 645 元，今晚 24 时起执行", text)
+        self.assertIn("92号汽油：现价 8.85 元/升（↓降约 0.51）", text)
+        self.assertIn("95号汽油：现价 8.62 元/升（↓降约 0.54）", text)
+        self.assertIn("⚡ 官方公告：汽油每吨下调 645 元，今晚 24 时起执行", text)
         self.assertNotIn("预计", text)  # 官方口径全篇不带「预计」
 
 
@@ -1773,16 +1822,14 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         calls = []
         text = self.plugin._report_text("广东", fake_price_data(8.09), alarm=False)
         h = self.plugin._text_hash(text)
-        path = os.path.join(
-            plugin_main.TMP_DIR,
-            f"ai_广东_{self.plugin.store.today()}_{h[:8]}.png",
+        path = Path(plugin_main.TMP_DIR) / (
+            f"ai_广东_{self.plugin.store.today()}_{h[:8]}.png"
         )
-        with open(path, "wb") as f:
-            f.write(b"\x89PNG\r\n\x1a\n" + b"0" * 2048)
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 2048)
         with mock.patch.object(plugin_main.genimage, "generate", self._counting_gen(calls)):
             await run_cmd(self.plugin.today_cmd(MockEvent(), "广东"))
         self.assertEqual(len(calls), 1)
-        self.assertTrue(os.path.isfile(path + ".meta.json"))
+        self.assertTrue(Path(f"{path}.meta.json").is_file())
 
     async def test_oil1002_tmp_cleanup(self):
         """mtime TTL 清理：AI 图/meta/单油卡 3 天、月度图 60 天，孤儿元数据一并清走。"""
@@ -1805,9 +1852,8 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             "monthly_2026-10.png": 60,
         }
         for name, age in ages.items():
-            p = os.path.join(tmp, name)
-            with open(p, "wb") as f:
-                f.write(b"0" * 10)
+            p = Path(tmp) / name
+            p.write_bytes(b"0" * 10)
             os.utime(p, (now - age, now - age))
         self.plugin._cleanup_tmp()
         for name, kept in expect_kept.items():
@@ -1922,22 +1968,34 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.ctx.sent_messages), 0)
 
     async def test_oil1008_announce_gate(self):
-        """官方公告轮询闸门：16:30~22:59 且整 10 分位才探测。"""
+        """官方公告轮询闸门：16:30~23:50 且整 10 分位才探测。"""
         g = plugin_main.OilPricePlugin._announce_gate
         self.assertTrue(g(datetime(2026, 11, 12, 16, 30)))
         self.assertTrue(g(datetime(2026, 11, 12, 17, 0)))
         self.assertTrue(g(datetime(2026, 11, 12, 22, 50)))
+        self.assertTrue(g(datetime(2026, 11, 12, 23, 50)))
         self.assertFalse(g(datetime(2026, 11, 12, 16, 20)))  # 16:30 前
         self.assertFalse(g(datetime(2026, 11, 12, 16, 33)))  # 非 10 分位
-        self.assertFalse(g(datetime(2026, 11, 12, 23, 0)))  # 23 点起停
+        self.assertFalse(g(datetime(2026, 11, 12, 23, 59)))  # 23:50 后
         self.assertFalse(g(datetime(2026, 11, 12, 8, 30)))  # 早晨不轮询
+        claim = self.plugin._claim_announce_slot
+        self.assertTrue(claim(datetime(2026, 11, 12, 17, 10, 5)))
+        self.assertFalse(claim(datetime(2026, 11, 12, 17, 10, 25)))
+        self.assertFalse(claim(datetime(2026, 11, 12, 17, 11)))
+        self.assertTrue(claim(datetime(2026, 11, 12, 17, 20)))
 
     async def test_oil1008_official_announce_push(self):
-        """窗口日官方公告推送：公告落地推官方口径并当日去重；
-        未落地不发；21 点仍未见公告回退推算口径（保证当天有一推）。"""
+        """窗口日只在公告落地后推官方口径，并按省份集每日去重。"""
         self.cfg["basic"]["change_remind_days"] = 1
         self.cfg["basic"]["provinces"] = ["江苏"]
-        off_fc = {"dir": "drop", "per_ton": -645, "delta": {"92": -0.51}, "official": True}
+        off_fc = {
+            "dir": "drop",
+            "per_ton": -645,
+            "per_ton_diesel": -625,
+            "delta": {"92": -0.51, "0": -0.53},
+            "official": True,
+            "base_eff": (datetime.now().date() + timedelta(days=1)).strftime("%Y-%m-%d"),
+        }
         est_fc = {"dir": "drop", "per_ton": -530, "delta": {"92": -0.42}}
         # 窗口日 rows（生效日=明天 → 剩余 0 天）
         win1 = fetch_with_window(1)
@@ -1964,11 +2022,12 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             ):
                 await self.plugin._official_announce_push(datetime(2026, 11, 12, 17, 10))
             text = "\n".join(plains())
-            self.assertIn("官方公告：本轮每吨下调 645 元，今晚 24 时起执行", text)
-            self.assertIn("（↓降 0.51）", text)
+            self.assertIn(
+                "官方公告：汽油每吨下调 645 元、柴油每吨下调 625 元，今晚 24 时起执行", text
+            )
+            self.assertIn("（↓降约 0.51）", text)
             self.assertNotIn("预计", text)
             n_msgs = len(self.ctx.sent_messages)
-            n_plains = len(plains())
 
             # ③ 同日去重：已发过不再重发
             with mock.patch.object(
@@ -1977,18 +2036,50 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
                 await self.plugin._official_announce_push(datetime(2026, 11, 12, 17, 20))
             self.assertEqual(len(self.ctx.sent_messages), n_msgs)
 
-            # ④ 21:10 公告仍未落地（数据源异常）→ 回退推算口径，保证当天有一推
+            # ④ 最后探测点仍未见公告：不发送估算值冒充当天官方公告
             st = self.plugin._load_push_state()
-            st["official_done"] = {}  # 清去重重试
+            st["official_done"] = {}  # 清去重，单独验证无公告时的行为
             self.plugin._save_push_state(st)
             with mock.patch.object(
                 plugin_main.forecast, "get_today_forecast", return_value=dict(est_fc)
             ):
-                await self.plugin._official_announce_push(datetime(2026, 11, 12, 21, 10))
-            text = "\n".join(plains()[n_plains:])
-            self.assertIn("预计降价", text)  # days=0 估算措辞
-            self.assertIn("预计每吨下调约 530 元，以发改委公告为准", text)
-            self.assertNotIn("官方公告：本轮", text)
+                await self.plugin._official_announce_push(datetime(2026, 11, 12, 23, 50))
+            self.assertEqual(len(self.ctx.sent_messages), n_msgs)
+
+    async def test_oil1008_official_rollover_and_image_fallback(self):
+        """ShowAPI 提前滚动到下轮日期时仍按官方生效日推送；出图失败回退文字。"""
+        self.cfg["basic"]["change_remind_days"] = 1
+        self.cfg["basic"]["provinces"] = ["江苏"]
+        fc = {
+            "dir": "drop",
+            "per_ton": -645,
+            "per_ton_diesel": -625,
+            "delta": {"92": -0.51, "0": -0.53},
+            "official": True,
+            "base_eff": (datetime.now().date() + timedelta(days=1)).isoformat(),
+        }
+        with (
+            mock.patch.object(plugin_main.forecast, "get_today_forecast", return_value=fc),
+            mock.patch.object(
+                plugin_main.genimage, "generate", side_effect=RuntimeError("出图失败")
+            ),
+        ):
+            await self.plugin._official_announce_push(
+                datetime.now().replace(hour=17, minute=10)
+            )
+        plains = [
+            p.text
+            for _, mc in self.ctx.sent_messages
+            for p in mc.chain
+            if type(p).__name__.endswith("Plain")
+        ]
+        self.assertEqual(len(plains), 1)
+        self.assertIn("官方公告：汽油每吨下调 645 元", plains[0])
+        self.assertIn("就是今晚 24 时", plains[0])
+        self.assertEqual(
+            self.plugin._load_push_state()["official_done"]["江苏"],
+            self.plugin.store.today(),
+        )
 
     async def test_a07_look_hit(self):
         ev = MockEvent()
@@ -2703,8 +2794,7 @@ def write_report(result):
         lines += ["", "## 失败详情"]
         for case, detail in failures:
             lines += ["", f"### {case}", "~~~text", detail, "~~~"]
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\n测试报告：{path}")
     return path
 

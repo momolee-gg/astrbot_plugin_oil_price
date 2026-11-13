@@ -21,6 +21,7 @@ import json
 import os
 import time
 from datetime import datetime
+from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -82,6 +83,7 @@ class OilPricePlugin(Star):
         self._pushed_month = None
         self._loop_started = False
         self._cleaned_date = None
+        self._announce_last_slot = None
         self._state_file = os.path.join(DATA_DIR, "push_state.json")
 
         context.register_web_api(
@@ -163,7 +165,7 @@ class OilPricePlugin(Star):
                     ):
                         self._pushed_month = month
                         await self._monthly_push()
-                if self._announce_gate(now):
+                if self._claim_announce_slot(now):
                     try:
                         await self._official_announce_push(now)
                     except Exception as e:
@@ -186,8 +188,7 @@ class OilPricePlugin(Star):
 
     def _save_push_state(self, st: dict):
         tmp = self._state_file + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(json.dumps(st, ensure_ascii=False))
+        Path(tmp).write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self._state_file)
 
     def _daily_style(self, date: str) -> str:
@@ -403,21 +404,37 @@ class OilPricePlugin(Star):
 
     # ================= 官方公告推送（窗口日当天，oil_1008） =================
 
+    _ANNOUNCE_END_HOUR = 23
+    _ANNOUNCE_END_MINUTE = 50
+
     @staticmethod
     def _announce_gate(now: datetime) -> bool:
-        """官方公告轮询闸门：调价提醒开启前提下，窗口日 16:30~22:59、
-        每 10 分钟一探（发改委公告一般 16 时前后发布，东财数据随后同步）。"""
-        if not (16 <= now.hour < 23):
+        """窗口日公告轮询闸门：16:30~23:50 每 10 分钟一探；只等官方数，
+        不把估算值冒充当天公告推送。"""
+        if not (16 <= now.hour <= OilPricePlugin._ANNOUNCE_END_HOUR):
             return False
         if now.hour == 16 and now.minute < 30:
             return False
+        if (
+            now.hour == OilPricePlugin._ANNOUNCE_END_HOUR
+            and now.minute > OilPricePlugin._ANNOUNCE_END_MINUTE
+        ):
+            return False
         return now.minute % 10 == 0
 
+    def _claim_announce_slot(self, now: datetime) -> bool:
+        """每个十分钟时槽只探测一次（主循环每 20 秒执行）。"""
+        if not self._announce_gate(now):
+            return False
+        slot = now.strftime("%Y-%m-%d %H:%M")
+        if slot == self._announce_last_slot:
+            return False
+        self._announce_last_slot = slot
+        return True
+
     async def _official_announce_push(self, now: datetime):
-        """窗口日官方公告推送（相位④）：窗口当天公告落地（东财调价记录
-        生效日=明天）即推一次官方口径提醒；21 点仍未见公告（公告延迟或
-        数据源异常）回退推算口径，保证当天有一推。措辞与推算预告严格
-        分型：「官方公告：本轮每吨下调 645 元，今晚 24 时起执行」。"""
+        """窗口日官方公告推送（相位④）：只在东财调价记录确认公告已落地
+        （官方=True，生效日=明天）时推送；不以估算值冒充当天公告。"""
         if self.prefs.change_remind_days() <= 0:
             return
         today = self.store.today()
@@ -426,9 +443,8 @@ class OilPricePlugin(Star):
             fc = await asyncio.to_thread(forecast.get_today_forecast, today)
         except Exception as e:
             logger.warning(f"[油价插件] 官方公告查询失败: {e}")
-        is_official = bool(fc and fc.get("official"))
-        if not is_official and now.hour < 21:
-            return  # 公告未落地：后续轮询点继续探测；21 点起回退推算口径
+        if not (fc and fc.get("official")):
+            return  # 公告尚未落地：继续轮询，不发送估算替代公告
         set_map = self._target_province_sets(self.prefs.notify_targets())
         if not set_map:
             return
@@ -440,15 +456,17 @@ class OilPricePlugin(Star):
                 continue
             try:
                 rows = await self._collect_today(list(provs))
-                remind_rows, min_days = [], None
-                for prov, data in rows:
-                    days, _ = reporting.days_until(data.get("next_change_time") or "")
-                    if days is None:
-                        continue
-                    min_days = days if min_days is None else min(min_days, days)
-                    remind_rows.append((prov, data))
-                if min_days != 0 or not remind_rows:
-                    continue  # 非窗口日（或窗口日期缺失）不推
+                if not rows:
+                    continue
+                # 官方调价行就是窗口日期的权威来源；即使 ShowAPI 已提前滚到
+                # 下一轮窗口，也以公告生效日（明天）构造本次官方提醒倒计时。
+                eff = str(fc.get("base_eff") or "").replace("-", "")
+                if len(eff) != 8:
+                    logger.warning("[油价插件] 官方公告缺少有效生效日，跳过本次推送")
+                    continue
+                remind_rows = [
+                    (prov, {**data, "next_change_time": eff}) for prov, data in rows
+                ]
                 text = reporting.build_remind_text(
                     remind_rows, self.prefs.default_fuels(), forecast=fc
                 )
@@ -456,28 +474,34 @@ class OilPricePlugin(Star):
                     continue
                 if not self._image_ready():
                     await self._push_text(text, set_targets)
-                elif len(rows) == 1:
-                    path = await self.get_or_gen_image(
-                        text,
-                        f"ai_official_{rows[0][0]}",
-                        today,
-                        provs=[rows[0][0]],
-                    )
-                    await self._push_text(text, set_targets)
-                    await self._push_image(path, set_targets)
                 else:
-                    path = await self.get_or_gen_image(
-                        text,
-                        "ai_official_multi",
-                        today,
-                        provs=[p for p, _ in rows],
-                    )
-                    await self._push_image(path, set_targets)
+                    text_sent = False
+                    try:
+                        if len(rows) == 1:
+                            path = await self.get_or_gen_image(
+                                text,
+                                f"ai_official_{rows[0][0]}",
+                                today,
+                                provs=[rows[0][0]],
+                            )
+                            await self._push_text(text, set_targets)
+                            text_sent = True
+                        else:
+                            path = await self.get_or_gen_image(
+                                text,
+                                "ai_official_multi",
+                                today,
+                                provs=[p for p, _ in rows],
+                            )
+                        await self._push_image(path, set_targets)
+                    except Exception as e:
+                        logger.error(f"[油价插件] 官方公告出图失败，回退文字: {e}")
+                        if not text_sent:
+                            await self._push_text(text, set_targets)
                 done[set_key] = today
-                logger.info(
-                    "[油价插件] 已发送调价官方公告推送"
-                    + ("" if is_official else "（公告未同步，回退推算口径）")
-                )
+                # 逐集落盘：后续省份集若出错/进程重启，不重复发送已完成的集。
+                self._save_push_state(st)
+                logger.info("[油价插件] 已发送官方公告调价提醒")
             except Exception as e:
                 logger.error(f"[油价插件] 官方公告推送异常（{set_key}）: {e}")
         self._save_push_state(st)
@@ -676,8 +700,9 @@ class OilPricePlugin(Star):
             "created": datetime.now().isoformat(timespec="seconds"),
         }
         try:
-            with open(path + ".meta.json", "w", encoding="utf-8") as f:
-                f.write(json.dumps(meta, ensure_ascii=False))
+            Path(path + ".meta.json").write_text(
+                json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+            )
         except Exception as e:
             logger.warning(f"[油价插件] 缓存元数据写入失败（不影响本次发图）: {e}")
 
@@ -1168,9 +1193,15 @@ class OilPricePlugin(Star):
             per_ton = abs(int(fc.get("per_ton") or 0))
             if fc.get("official"):
                 extra = (
-                    f"\n⚡ 官方公告：本轮每吨{word} {per_ton} 元"
-                    f"（92号 {d92:.2f} 元/升），今晚 24 时起执行"
+                    f"\n⚡ 官方公告：汽油每吨{word} {per_ton} 元（92号约 {d92:.2f} 元/升）"
                 )
+                cy = fc.get("per_ton_diesel")
+                d0 = (fc.get("delta") or {}).get("0")
+                if cy is not None:
+                    extra += f"，柴油每吨{word} {abs(int(cy))} 元"
+                    if d0 is not None:
+                        extra += f"（0号约 {abs(d0):.2f} 元/升）"
+                extra += "，今晚 24 时起执行"
             else:
                 extra = (
                     f"\n⚡ 预计每吨{word}约 {per_ton} 元"

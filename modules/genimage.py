@@ -6,15 +6,18 @@ provider（provider_config），插件只负责把文字消息变成海报提示
 """
 
 import base64
+import http.client
+import ipaddress
 import json
-import os
 import re
+import socket
 import urllib.parse
-import urllib.request
+from pathlib import Path
 
 DEFAULT_MODEL = "qwen-image-3.0"
 TIMEOUT = 180
 SIZE = "864x1152"
+USER_AGENT_DL = "Mozilla/5.0"  # 图片下载用 UA（CDN 拒绝空 UA 时兜底）
 
 # 阿里云百炼 qwen-image 走原生多模态接口（非 OpenAI images 协议）
 _DASHSCOPE_NATIVE = "/api/v1/services/aigc/multimodal-generation/generation"
@@ -238,11 +241,51 @@ def endpoints_from_provider_config(cfg: dict) -> list:
     return out
 
 
+def _dial_ip(host: str, error: type) -> str:
+    """解析主机并校验全部解析结果均为公网 IP；返回首个可用拨号 IP。
+
+    SSRF 防护：阻断私网、环回、链路本地与云元数据地址（如 169.254.169.254）。
+    """
+    try:
+        infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    except OSError as e:
+        raise error(f"主机解析失败: {host}: {e}") from e
+    dial = None
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not ip.is_global:
+            raise error(f"主机解析到非公网地址: {info[4][0]}")
+        if dial is None:
+            dial = info[4][0]
+    if dial is None:
+        raise error(f"主机无可用公网解析: {host}")
+    return dial
+
+
+class _SNIHTTPSConnection(http.client.HTTPSConnection):
+    """按校验后的 IP 拨号、按原主机名做 SNI 与证书校验（防 DNS rebinding）。"""
+
+    def __init__(self, host: str, sni: str, **kw):
+        super().__init__(host, **kw)
+        self._sni = sni
+
+    def connect(self):
+        self.sock = self._create_connection((self.host, self.port), timeout=self.timeout)
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=self._sni)
+
+
 def _gen_once(prompt: str, api_key: str, url: str, model: str, size: str):
     """调一次生图端点，返回图片 URL（b64 响应转成 data 未处理，统一走 URL/字节）。
 
     返回 ("url", url) 或 ("b64", b64_str)；失败抛异常。
+    网络层用 http.client 按校验后 IP 直连（SNI/证书仍校验原主机名），
+    阻断端点配置被注入后对内网/云元数据的探测。
     """
+    parsed = urllib.parse.urlsplit(url)
+    host = parsed.hostname or ""
+    if parsed.scheme != "https" or not host:
+        raise GenImageError(f"生图端点仅允许 https: {url}")
+    dial = _dial_ip(host, GenImageError)
     if "multimodal-generation" in url:
         payload = {
             "model": model,
@@ -253,17 +296,25 @@ def _gen_once(prompt: str, api_key: str, url: str, model: str, size: str):
     else:
         payload = {"model": model, "prompt": prompt, "size": size}
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + api_key,
-        },
-    )
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+    req_path = parsed.path or "/"
+    if parsed.query:
+        req_path += "?" + parsed.query
+    conn = _SNIHTTPSConnection(dial, sni=host, timeout=TIMEOUT)
+    try:
+        conn.request(
+            "POST",
+            req_path,
+            body=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + api_key,
+                "Host": host,
+            },
+        )
+        resp = conn.getresponse()
         root = json.loads(resp.read().decode("utf-8"))
+    finally:
+        conn.close()
 
     if "multimodal-generation" in url:
         content = (
@@ -282,6 +333,40 @@ def _gen_once(prompt: str, api_key: str, url: str, model: str, size: str):
     raise RuntimeError(f"生图无返回图片: {root.get('error') or root}")
 
 
+def _download_image(url: str) -> bytes:
+    """下载生图返回的图片 URL，返回字节流；https + 公网 IP 校验 + 重定向跟随。"""
+    for _hop in range(3):  # 最多跟随 3 次重定向
+        parsed = urllib.parse.urlsplit(url)
+        host = parsed.hostname or ""
+        if parsed.scheme != "https" or not host:
+            raise GenImageError(f"图片地址仅允许 https: {url}")
+        dial = _dial_ip(host, GenImageError)
+        req_path = parsed.path or "/"
+        if parsed.query:
+            req_path += "?" + parsed.query
+        conn = _SNIHTTPSConnection(dial, sni=host, timeout=TIMEOUT)
+        try:
+            conn.request(
+                "GET",
+                req_path,
+                headers={"Host": host, "User-Agent": USER_AGENT_DL},
+            )
+            resp = conn.getresponse()
+            if resp.status in (301, 302, 303, 307, 308):
+                loc = resp.getheader("Location") or ""
+                resp.read()
+                if not loc:
+                    raise GenImageError("重定向缺少 Location")
+                url = urllib.parse.urljoin(url, loc)
+                continue
+            if resp.status != 200:
+                raise GenImageError(f"图片下载失败: HTTP {resp.status}")
+            return resp.read()
+        finally:
+            conn.close()
+    raise GenImageError("图片下载重定向次数过多")
+
+
 def generate(
     prompt: str,
     endpoints: list,
@@ -298,6 +383,9 @@ def generate(
     """
     if not endpoints:
         raise GenImageError("未从 bot 配置的模型提供者取到生图端点")
+    name_path = Path(name)
+    if not name or name_path.is_absolute() or ".." in name_path.parts:
+        raise GenImageError(f"非法输出文件名: {name}")
     last_err = None
     for ep in endpoints:
         api_key, url = ep[0], ep[1]
@@ -308,16 +396,14 @@ def generate(
             last_err = GenImageError(f"生图请求失败[{url} {ep_model}]: {e}")
             continue
         try:
-            os.makedirs(out_dir, exist_ok=True)
-            path = os.path.join(out_dir, name)
-            if kind == "b64":
-                with open(path, "wb") as f:
-                    f.write(base64.b64decode(img))
-            else:
-                urllib.request.urlretrieve(img, path)
-            if os.path.getsize(path) < 1024:
+            data = base64.b64decode(img) if kind == "b64" else _download_image(img)
+            if len(data) < 1024:
                 raise GenImageError("下载图片过小，疑似失败")
-            return path
+            out_dir_path = Path(out_dir)
+            out_dir_path.mkdir(parents=True, exist_ok=True)
+            path = out_dir_path / name
+            path.write_bytes(data)
+            return str(path)
         except GenImageError:
             raise
         except Exception as e:
