@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20261113T064548609Z-25772-08b5180f1e69",
+  "runId": "20261113T064548609Z-25772-08b5180f1e69",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "9ae44fd5b2aad082aeb76bb057e15c8020ab2a5a",
+  "diffHash": "f78ca4101b99320c13a38da3048f901de8015e6b5d3f530eba07a7032120aed5",
+  "rulesVersion": "unavailable",
+  "sessionHash": "f05541db3cd7e905340dcae22b27bf774b09ba55e7d40258bea988a7c677e7a7",
+  "reportRef": ".mimosa/reports/task-review-sess_f2052f8c-4c0d-49d6-99b6-0ac36147f1f3-20261113T064548609Z-25772-08b5180f1e69.json",
+  "events": [],
+  "observedFindingIds": [
+    "mimosa-d76270a581dc0be7bcc20616"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "modules/netguard.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "modules/datasource.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "modules/feishu.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "modules/constants.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "config.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "main.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/test_oil_plugin.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-11-13T06:45:49.188Z"
+}

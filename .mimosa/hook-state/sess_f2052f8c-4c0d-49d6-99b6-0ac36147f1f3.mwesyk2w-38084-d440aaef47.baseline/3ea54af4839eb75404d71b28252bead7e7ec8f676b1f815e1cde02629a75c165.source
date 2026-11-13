@@ -1,0 +1,34 @@
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Pillow (syntax-level import check only)
+        run: pip install "Pillow>=10.0"
+      - name: Syntax compile
+        run: python -m compileall -q main.py config.py modules
+      - name: JSON / YAML validity
+        run: |
+          python - <<'PY'
+          import json, yaml
+          json.load(open("_conf_schema.json", encoding="utf-8"))
+          json.load(open(".astrbot-plugin/i18n/zh-CN.json", encoding="utf-8"))
+          yaml.safe_load(open("metadata.yaml", encoding="utf-8"))
+          print("json/yaml ok")
+          PY
+      - name: Secret scan (best effort)
+        run: |
+          ! grep -rInE "github[_]pat_[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|eebb[0-9a-fA-F]{20,}|sk-[A-Za-z0-9]{20,}|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}" \
+            --include="*.py" --include="*.json" --include="*.md" --include="*.html" --include="*.yml" .

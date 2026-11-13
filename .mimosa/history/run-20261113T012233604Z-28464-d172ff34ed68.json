@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20261113T012233604Z-28464-d172ff34ed68",
+  "runStatus": "inconclusive",
+  "errors": [
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_deploy_step1.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read",
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read",
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2b.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read",
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2c.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read",
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2d.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read",
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2e.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read",
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2f.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read",
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_deploy_step3.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read",
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/zcode-oil-askpass.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read"
+  ],
+  "target": ".",
+  "revision": "9ae44fd5b2aad082aeb76bb057e15c8020ab2a5a",
+  "diffHash": "d55ead0292bfb58ee15defcfa0fef28b070a3cc386b6fa708ccb6f5cbc5862fe",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-11-13T01:22:33.604Z",
+  "timing": {
+    "startedAt": "2026-11-13T01:22:31.603Z",
+    "completedAt": "2026-11-13T01:22:33.604Z",
+    "durationMs": 2001
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 0,
+    "bySeverity": {},
+    "byStatus": {}
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "changed_file_unreadable": 9,
+      "project_check_failed": 9
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-sess_727506b0-3d0c-406f-8be1-f0f1f685f5f8-20261113T012233604Z-28464-d172ff34ed68.json"
+}

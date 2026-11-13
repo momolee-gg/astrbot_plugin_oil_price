@@ -1,0 +1,507 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20261113T064548609Z-25772-08b5180f1e69",
+  "run_status": "completed",
+  "errors": [],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "complete",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": true,
+      "captured_files": 27,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 7
+    },
+    "change_tracking": {
+      "touched_observed": 7,
+      "touched_retained": 7,
+      "truncated": false,
+      "bash_mutation": true,
+      "bash_discovered": 7,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 7,
+      "selected_files": 7,
+      "limit": 20,
+      "truncated": false
+    },
+    "scanning": {
+      "required_files": 7,
+      "scanned_files": 7,
+      "skipped_files": 0,
+      "failed_files": 0,
+      "project_checks_required": 0,
+      "project_checks_completed": 0
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {},
+    "reasons": [],
+    "reasons_truncated": false
+  },
+  "generated_at": "2026-11-13T06:45:48.609Z",
+  "session_id": "sess_f2052f8c-4c0d-49d6-99b6-0ac36147f1f3",
+  "target": ".",
+  "revision": "9ae44fd5b2aad082aeb76bb057e15c8020ab2a5a",
+  "rules_version": "unavailable",
+  "diff_hash": "f78ca4101b99320c13a38da3048f901de8015e6b5d3f530eba07a7032120aed5",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 7,
+    "changed_files": [
+      {
+        "file": "config.py",
+        "ranges": [
+          {
+            "start": 3,
+            "end": 4
+          },
+          {
+            "start": 9,
+            "end": 9
+          },
+          {
+            "start": 146,
+            "end": 223
+          },
+          {
+            "start": 307,
+            "end": 307
+          },
+          {
+            "start": 322,
+            "end": 323
+          },
+          {
+            "start": 342,
+            "end": 351
+          },
+          {
+            "start": 499,
+            "end": 550
+          },
+          {
+            "start": 571,
+            "end": 581
+          },
+          {
+            "start": 587,
+            "end": 588
+          }
+        ],
+        "before_hash": "f3daead5286ee2fceb73348e2fb726fc86fd8775bc68da9cd6cc337497644e92",
+        "after_hash": "505dba8f46bbe9b91c5b814fce5a113717e67ccd36fb31f0c0c24ce182fd7ef2"
+      },
+      {
+        "file": "main.py",
+        "ranges": [
+          {
+            "start": 5,
+            "end": 5
+          },
+          {
+            "start": 7,
+            "end": 7
+          },
+          {
+            "start": 17,
+            "end": 18
+          },
+          {
+            "start": 39,
+            "end": 39
+          },
+          {
+            "start": 42,
+            "end": 42
+          },
+          {
+            "start": 54,
+            "end": 54
+          },
+          {
+            "start": 72,
+            "end": 73
+          },
+          {
+            "start": 90,
+            "end": 91
+          },
+          {
+            "start": 164,
+            "end": 165
+          },
+          {
+            "start": 177,
+            "end": 190
+          },
+          {
+            "start": 292,
+            "end": 306
+          },
+          {
+            "start": 310,
+            "end": 310
+          },
+          {
+            "start": 313,
+            "end": 319
+          },
+          {
+            "start": 322,
+            "end": 322
+          },
+          {
+            "start": 326,
+            "end": 326
+          },
+          {
+            "start": 330,
+            "end": 330
+          },
+          {
+            "start": 333,
+            "end": 338
+          },
+          {
+            "start": 341,
+            "end": 342
+          },
+          {
+            "start": 347,
+            "end": 347
+          },
+          {
+            "start": 350,
+            "end": 350
+          },
+          {
+            "start": 355,
+            "end": 355
+          },
+          {
+            "start": 358,
+            "end": 358
+          },
+          {
+            "start": 361,
+            "end": 361
+          },
+          {
+            "start": 373,
+            "end": 375
+          },
+          {
+            "start": 377,
+            "end": 377
+          },
+          {
+            "start": 383,
+            "end": 392
+          },
+          {
+            "start": 399,
+            "end": 399
+          },
+          {
+            "start": 401,
+            "end": 402
+          },
+          {
+            "start": 404,
+            "end": 405
+          },
+          {
+            "start": 410,
+            "end": 410
+          },
+          {
+            "start": 434,
+            "end": 436
+          },
+          {
+            "start": 438,
+            "end": 439
+          },
+          {
+            "start": 447,
+            "end": 448
+          },
+          {
+            "start": 456,
+            "end": 459
+          },
+          {
+            "start": 462,
+            "end": 462
+          },
+          {
+            "start": 500,
+            "end": 501
+          },
+          {
+            "start": 514,
+            "end": 521
+          },
+          {
+            "start": 523,
+            "end": 525
+          },
+          {
+            "start": 527,
+            "end": 580
+          },
+          {
+            "start": 583,
+            "end": 583
+          },
+          {
+            "start": 588,
+            "end": 589
+          },
+          {
+            "start": 592,
+            "end": 594
+          },
+          {
+            "start": 605,
+            "end": 606
+          },
+          {
+            "start": 608,
+            "end": 608
+          },
+          {
+            "start": 615,
+            "end": 620
+          },
+          {
+            "start": 622,
+            "end": 622
+          },
+          {
+            "start": 628,
+            "end": 628
+          },
+          {
+            "start": 631,
+            "end": 631
+          },
+          {
+            "start": 636,
+            "end": 636
+          },
+          {
+            "start": 642,
+            "end": 642
+          },
+          {
+            "start": 644,
+            "end": 646
+          },
+          {
+            "start": 649,
+            "end": 654
+          },
+          {
+            "start": 674,
+            "end": 674
+          },
+          {
+            "start": 832,
+            "end": 832
+          },
+          {
+            "start": 849,
+            "end": 861
+          },
+          {
+            "start": 864,
+            "end": 919
+          },
+          {
+            "start": 1379,
+            "end": 1379
+          },
+          {
+            "start": 1385,
+            "end": 1385
+          },
+          {
+            "start": 1387,
+            "end": 1419
+          },
+          {
+            "start": 1421,
+            "end": 1421
+          }
+        ],
+        "before_hash": "3cd2beab390c695fcb8ae310bc579ccaa99d47222c6e6d926c9a6e74ebf4701e",
+        "after_hash": "45086dbfc82f6592f211019480a41a6de1caab439834291ba7384b5263184b40"
+      },
+      {
+        "file": "modules/constants.py",
+        "ranges": [
+          {
+            "start": 15,
+            "end": 19
+          }
+        ],
+        "before_hash": "51e790aeb0cd21f673a4c32eed8ab85cd2b363238a8ec019af13e3e51d32eb52",
+        "after_hash": "3ace4570d451ce2be9a2ee5a1dccae7b82b7d91b9815f44e1577d260841c3537"
+      },
+      {
+        "file": "modules/datasource.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          },
+          {
+            "start": 7,
+            "end": 7
+          },
+          {
+            "start": 9,
+            "end": 10
+          },
+          {
+            "start": 30,
+            "end": 31
+          },
+          {
+            "start": 34,
+            "end": 34
+          },
+          {
+            "start": 37,
+            "end": 39
+          }
+        ],
+        "before_hash": "416980ed894b7a8c5ea49a047a1e09f97e26f56c56f954c7fc45b102c815ef49",
+        "after_hash": "ceb924cfc74665658dfec59eaf159d2bfb0bfcb70e503b1a85e2a0d088e2a5ee"
+      },
+      {
+        "file": "modules/feishu.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 318
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "86944321f801b5bb9938c42c8acdbb9474a043dd763a353ca5ea9a5878bd224a"
+      },
+      {
+        "file": "modules/netguard.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 74
+          }
+        ],
+        "before_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "after_hash": "6596cab322f03302765248da32997dfd083a0e578fa6775f8586d7a673e72da9"
+      },
+      {
+        "file": "test/test_oil_plugin.py",
+        "ranges": [
+          {
+            "start": 37,
+            "end": 43
+          },
+          {
+            "start": 594,
+            "end": 597
+          },
+          {
+            "start": 599,
+            "end": 603
+          },
+          {
+            "start": 605,
+            "end": 605
+          },
+          {
+            "start": 647,
+            "end": 647
+          },
+          {
+            "start": 652,
+            "end": 652
+          },
+          {
+            "start": 654,
+            "end": 654
+          },
+          {
+            "start": 2722,
+            "end": 3256
+          }
+        ],
+        "before_hash": "704324fe3d6c0453141968c20fc58f22788eb53a5c52fee84d0d4df163f17241",
+        "after_hash": "42a0d1fcdb2278cda7c6e62aaa24ad865bd6411e1b38594826b27a4e7d3f9bea"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-11-13T06:45:45.930Z",
+    "completed_at": "2026-11-13T06:45:48.609Z",
+    "duration_ms": 2679,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "complete",
+    "latencyMs": 2679,
+    "peakMemoryBytes": 139776000,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 7,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-sess_f2052f8c-4c0d-49d6-99b6-0ac36147f1f3-20261113T064548609Z-25772-08b5180f1e69.json",
+    "latest_report": ".mimosa/reports/task-review-sess_f2052f8c-4c0d-49d6-99b6-0ac36147f1f3.json",
+    "history_summary": ".mimosa/history/run-20261113T064548609Z-25772-08b5180f1e69.json"
+  }
+}

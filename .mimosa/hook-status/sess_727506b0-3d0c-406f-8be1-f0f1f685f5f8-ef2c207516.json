@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-11-13T02:38:17.130Z",
+  "sessionId": "sess_727506b0-3d0c-406f-8be1-f0f1f685f5f8",
+  "event": "PostToolUse",
+  "toolName": "Write",
+  "file": "C:/Users/gxu/AppData/Local/Temp/zcode-oil-askpass.sh",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 41,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

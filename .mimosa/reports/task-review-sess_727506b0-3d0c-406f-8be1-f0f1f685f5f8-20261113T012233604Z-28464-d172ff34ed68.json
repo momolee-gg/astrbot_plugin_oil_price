@@ -1,0 +1,328 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20261113T012233604Z-28464-d172ff34ed68",
+  "run_status": "inconclusive",
+  "errors": [
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step1.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    },
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    },
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2b.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    },
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2c.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    },
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2d.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    },
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2e.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    },
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2f.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    },
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step3.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    },
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/zcode-oil-askpass.sh",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    }
+  ],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "partial",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": true,
+      "captured_files": 34,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 2
+    },
+    "change_tracking": {
+      "touched_observed": 11,
+      "touched_retained": 11,
+      "truncated": false,
+      "bash_mutation": true,
+      "bash_discovered": 2,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 2,
+      "selected_files": 2,
+      "limit": 20,
+      "truncated": false
+    },
+    "scanning": {
+      "required_files": 2,
+      "scanned_files": 2,
+      "skipped_files": 0,
+      "failed_files": 0,
+      "project_checks_required": 0,
+      "project_checks_completed": 0
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {
+      "changed_file_unreadable": 9,
+      "project_check_failed": 9
+    },
+    "reasons": [
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step1.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2b.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2c.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2d.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2e.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2f.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step3.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/zcode-oil-askpass.sh",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step1.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2b.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2c.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2d.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2e.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step2f.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_deploy_step3.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/zcode-oil-askpass.sh",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      }
+    ],
+    "reasons_truncated": false
+  },
+  "generated_at": "2026-11-13T01:22:33.604Z",
+  "session_id": "sess_727506b0-3d0c-406f-8be1-f0f1f685f5f8",
+  "target": ".",
+  "revision": "9ae44fd5b2aad082aeb76bb057e15c8020ab2a5a",
+  "rules_version": "unavailable",
+  "diff_hash": "d55ead0292bfb58ee15defcfa0fef28b070a3cc386b6fa708ccb6f5cbc5862fe",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 2,
+    "changed_files": [
+      {
+        "file": "modules/datasource.py",
+        "ranges": [
+          {
+            "start": 20,
+            "end": 35
+          },
+          {
+            "start": 60,
+            "end": 60
+          }
+        ],
+        "before_hash": "48c9c7f9f980d9eef7497db5f95da90a97d22a43deff7dda65c1512b56dc824f",
+        "after_hash": "416980ed894b7a8c5ea49a047a1e09f97e26f56c56f954c7fc45b102c815ef49"
+      },
+      {
+        "file": "test/test_oil_plugin.py",
+        "ranges": [
+          {
+            "start": 588,
+            "end": 588
+          },
+          {
+            "start": 600,
+            "end": 600
+          },
+          {
+            "start": 604,
+            "end": 604
+          },
+          {
+            "start": 606,
+            "end": 606
+          }
+        ],
+        "before_hash": "f5942db6c16f697774c9a68609f0c19bb5dcaacca1788dbee8226ba2cc53e323",
+        "after_hash": "c454007206ae8774f5bfbbcb3c91a846d982125d91d91f43c19b1cf2ef00adfd"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-11-13T01:22:31.603Z",
+    "completed_at": "2026-11-13T01:22:33.604Z",
+    "duration_ms": 2001,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "partial/INCONCLUSIVE",
+    "latencyMs": 2001,
+    "peakMemoryBytes": 130019328,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 2,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-sess_727506b0-3d0c-406f-8be1-f0f1f685f5f8-20261113T012233604Z-28464-d172ff34ed68.json",
+    "latest_report": ".mimosa/reports/task-review-sess_727506b0-3d0c-406f-8be1-f0f1f685f5f8.json",
+    "history_summary": ".mimosa/history/run-20261113T012233604Z-28464-d172ff34ed68.json"
+  }
+}

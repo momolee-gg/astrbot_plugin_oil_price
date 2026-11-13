@@ -37,10 +37,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api.web import error_response, json_response, request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
-try:  # 官方 api 面优先，旧版本回退 core 路径
-    from astrbot.api.event import EventMessageType
-except ImportError:  # pragma: no cover
-    from astrbot.core.platform.astr_message_event import EventMessageType
+from astrbot.api.event.filter import EventMessageType
 
 from .config import Prefs
 from .modules import (
@@ -159,7 +156,11 @@ class OilPricePlugin(Star):
 
     _SEEN_FLUSH_INTERVAL = 600  # 每会话限频落盘窗口（秒）：高频群不逐条写盘
 
-    @filter.event_message_type(EventMessageType.ALL)
+    @filter.event_message_type(
+        EventMessageType.GROUP_MESSAGE
+        | EventMessageType.PRIVATE_MESSAGE
+        | EventMessageType.OTHER_MESSAGE
+    )
     async def record_seen_session(self, event: AstrMessageEvent):
         """被动记录见过的会话（只记录不回复）：设置页「从记录会话选择」的数据源。"""
         try:

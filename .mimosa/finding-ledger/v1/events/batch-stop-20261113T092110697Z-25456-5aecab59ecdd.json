@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20261113T092110697Z-25456-5aecab59ecdd",
+  "runId": "20261113T092110697Z-25456-5aecab59ecdd",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "9ae44fd5b2aad082aeb76bb057e15c8020ab2a5a",
+  "diffHash": "018a4a9a8d9667df071192990dcfaaee36f0cfb3ccab7c1c0c7cf6f2a091eb7d",
+  "rulesVersion": "unavailable",
+  "sessionHash": "f05541db3cd7e905340dcae22b27bf774b09ba55e7d40258bea988a7c677e7a7",
+  "reportRef": ".mimosa/reports/task-review-sess_f2052f8c-4c0d-49d6-99b6-0ac36147f1f3-20261113T092110697Z-25456-5aecab59ecdd.json",
+  "events": [],
+  "observedFindingIds": [
+    "mimosa-d76270a581dc0be7bcc20616"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "modules/storage.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "main.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/_local/astrbot/api/event.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/test_oil_plugin.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "config.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-11-13T09:21:11.270Z"
+}
