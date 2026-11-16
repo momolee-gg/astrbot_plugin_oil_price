@@ -208,16 +208,18 @@
         "hint": "同一天相同内容的海报只真实生成一次，重复查询/推送直接复用已有图片（秒回、省生图费用）；关闭后每次都真实生成"
       },
       "feishu_app_id": {
-        "description": "🕊️ 飞书自建应用 App ID",
+        "description": "🕊️ 飞书自建应用 App ID（已废弃，自动忽略）",
         "type": "string",
         "default": "",
-        "hint": "飞书开放平台创建企业自建应用后获取；与 App Secret 成对填写后，个人/群目标与海报图片推送才可用"
+        "readonly": true,
+        "hint": "v1.5.2 起飞书个人/群消息统一走 AstrBot 平台适配器发送（完整 UMO 目标），图片由适配器上传，插件不再需要自建应用凭证"
       },
       "feishu_app_secret": {
-        "description": "🔐 飞书自建应用 App Secret",
+        "description": "🔐 飞书自建应用 App Secret（已废弃，自动忽略）",
         "type": "string",
         "default": "",
-        "hint": "与 App ID 成对填写；应用需开通「获取与发送单聊、群组消息」权限（im:message），用手机号/邮箱定位用户还需「根据手机号或邮箱获取用户 ID」权限，并发布应用版本"
+        "readonly": true,
+        "hint": "同上，v1.5.2 起不再读取；飞书机器人凭证统一由 AstrBot「消息平台」的飞书适配器持有"
       }
     }
   }

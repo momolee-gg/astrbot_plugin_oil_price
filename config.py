@@ -147,16 +147,8 @@ class Prefs:
         return bool(self._get("basic", "monthly_push", True))
 
     # ---------- 通用推送目标行（oil_1010：不区分平台，格式识别 + 调度覆盖） ----------
-
-    def feishu_app_id(self) -> str:
-        return str(self._get("api", "feishu_app_id", "") or "").strip()
-
-    def feishu_app_secret(self) -> str:
-        return str(self._get("api", "feishu_app_secret", "") or "").strip()
-
-    def feishu_app_ready(self) -> bool:
-        """自建应用凭证是否成对就绪（feishu_app 类目标可收海报图片的前提）。"""
-        return bool(self.feishu_app_id() and self.feishu_app_secret())
+    # 飞书个人/群消息统一走 AstrBot 平台适配器（完整 UMO），插件不再持有
+    # 自建应用凭证；webhook 通道不依赖任何凭证（v1.5.2 删除 feishu_app_* 配置）
 
     def push_rows(self) -> list:
         """解析并校验后的推送目标行（群聊在前、个人在后）。
@@ -293,9 +285,6 @@ class Prefs:
             "default_fuels": self.default_fuels(),
             "app_key": self.app_key(),
             "app_key_ready": self.app_key_ready(),
-            "feishu_app_id": self.feishu_app_id(),
-            "feishu_app_secret": self.feishu_app_secret(),
-            "feishu_app_ready": self.feishu_app_ready(),
             "datasource": DATASOURCE,
             "register_url": REGISTER_URL,
             "province_options": PROVINCES,
@@ -451,12 +440,6 @@ class Prefs:
         # appKey
         app_key = str(payload.get("app_key", "") or "").strip()
 
-        # 飞书自建应用凭证（成对校验）
-        f_app_id = str(payload.get("feishu_app_id", "") or "").strip()
-        f_app_secret = str(payload.get("feishu_app_secret", "") or "").strip()
-        if bool(f_app_id) != bool(f_app_secret):
-            errors.append("飞书 app_id 与 app_secret 需成对填写")
-
         if errors:
             return errors
 
@@ -480,8 +463,6 @@ class Prefs:
         api["gen_enable"] = gen_enable
         api["gen_cache"] = gen_cache
         api["gen_model"] = gen_model
-        api["feishu_app_id"] = f_app_id
-        api["feishu_app_secret"] = f_app_secret
         return []
 
     def save(self) -> None:

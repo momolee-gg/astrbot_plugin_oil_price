@@ -2794,13 +2794,10 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
     def _row(id, frequency="", time="", limit=None):
         return {"id": id, "frequency": frequency, "time": time, "limit": limit}
 
-    def _rows_config(self, group_rows=None, priv_rows=None, app=False):
+    def _rows_config(self, group_rows=None, priv_rows=None):
         cfg = base_config()
         cfg["basic"]["push_group_targets"] = group_rows or []
         cfg["basic"]["push_private_targets"] = priv_rows or []
-        if app:
-            cfg["api"]["feishu_app_id"] = "cli_a"
-            cfg["api"]["feishu_app_secret"] = "s1"
         return cfg
 
     async def test_x01_webhook_row_text_only(self):
@@ -2822,51 +2819,33 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sent[0].startswith("https://open.feishu.cn/"))
 
     async def test_x02_mixed_rows_capability_routing(self):
-        """混合行：多省仅图片——webhook 行只收速览文字，图片能力行（umo/应用行）
-        只收图片；应用行上传一次、逐目标复用 image_key。"""
+        """混合行：多省仅图片——webhook 行只收速览文字，umo 行只收图片
+        （飞书个人/群消息已统一走 UMO 适配器路径，不再有应用行）。"""
         pl, ctx, _cfg = make_plugin(
             name="x02",
             config=self._rows_config(
                 group_rows=[
                     self._row("https://open.feishu.cn/open-apis/bot/v2/hook/abc"),
-                    self._row("oc_g1"),
                     self._row("10001"),
                 ],
-                app=True,
             ),
         )
-        img_targets, hook_texts, app_texts = [], [], []
+        hook_texts = []
         with (
             mock.patch.object(
                 plugin_main.OilPricePlugin,
                 "_gen_endpoints",
                 return_value=[MockProvider()],
             ),
-            mock.patch.object(feishu, "upload_image", return_value="img_k"),
-            mock.patch.object(
-                feishu,
-                "send_app_image",
-                side_effect=lambda a, s, t, p, k=None, host=None: img_targets.append(
-                    t["id"]
-                ),
-            ),
             mock.patch.object(
                 feishu,
                 "send_webhook",
                 side_effect=lambda t, text: hook_texts.append(text),
             ),
-            mock.patch.object(
-                feishu,
-                "send_app_text",
-                side_effect=lambda a, s, t, text, host=None: app_texts.append(t["id"]),
-            ),
         ):
             await pl._daily_push()
-        # 多省=仅图片：应用行与 umo 行收图；webhook 行改收速览文字；应用行不重收文字
-        self.assertEqual(img_targets, ["oc_g1"])
+        # 多省=仅图片：umo 行收图（1 条图片消息链）；webhook 行改收速览文字
         self.assertEqual(len(hook_texts), 1)
-        self.assertEqual(app_texts, [])
-        # umo 行 10001：多省仅图片，收到一条图片消息链
         self.assertEqual(len(ctx.sent_messages), 1)
 
     async def test_x03_row_level_state_isolated(self):
@@ -2947,22 +2926,6 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("https://open.feishu.cn/open-apis/bot/v2/hook/abc", text)
         # umo 个人行 123456001 通过 ctx 实际收到消息
         self.assertGreaterEqual(len(ctx.sent_messages), 1)
-
-    async def test_x07_feishu_chats_cmd(self):
-        """/飞书群列表：未配凭证给提示；配凭证后列出 chat_id。"""
-        pl, _ctx, _cfg = make_plugin(name="x07a", config=base_config())
-        ev = MockEvent()
-        out = await run_cmd(pl.feishu_chats_cmd(ev))
-        self.assertIn("app_id", out[0]["text"])
-        pl, _ctx, _cfg = make_plugin(name="x07b", config=self._rows_config(app=True))
-        with mock.patch.object(
-            feishu,
-            "list_chats",
-            return_value=[("oc_1", "油价群")],
-        ):
-            out = await run_cmd(pl.feishu_chats_cmd(ev))
-        self.assertIn("oc_1", out[-1]["text"])
-        self.assertIn("油价群", out[-1]["text"])
 
     async def test_x08_row_schedule_override(self):
         """行内调度覆盖：weekly:N 与 HH:MM 解析；留空继承全局默认。"""
@@ -3109,9 +3072,6 @@ class TestNetGuard(unittest.TestCase):
 class TestFeishu(unittest.TestCase):
     """飞书客户端：目标分类、加签算法、请求构造与守卫接线。"""
 
-    def setUp(self):
-        feishu._reset_token_cache()
-
     def test_p01_parse_webhook(self):
         t, err = feishu.parse_target("https://open.feishu.cn/open-apis/bot/v2/hook/abc123")
         self.assertEqual(err, "")
@@ -3131,17 +3091,12 @@ class TestFeishu(unittest.TestCase):
         self.assertIsNone(t)
         self.assertIn("官方", err)
 
-    def test_p04_parse_kinds(self):
-        cases = {
-            "ou_8cb5bec1b1": "open_id",
-            "oc_0529e11f8f": "chat_id",
-            "13800138000": "mobile",
-            "a@b.co": "email",
-        }
-        for raw, kind in cases.items():
+    def test_p04_feishu_ids_rejected_with_umo_hint(self):
+        """飞书 ID 形态不再是目标：提示改用完整 UMO（经适配器发送）。"""
+        for raw in ("ou_x1", "oc_g1", "13800138000", "a@b.co"):
             t, err = feishu.parse_target(raw)
-            self.assertEqual(err, "", raw)
-            self.assertEqual(t["kind"], kind, raw)
+            self.assertIsNone(t, raw)
+            self.assertIn("完整 UMO", err, raw)
 
     def test_p05_parse_invalid(self):
         for raw in ("", "hello", "ou", "oc", "a@", "138"):
@@ -3149,9 +3104,6 @@ class TestFeishu(unittest.TestCase):
             self.assertIsNone(t, raw)
 
     def test_p06_mask_target(self):
-        m = feishu.mask_target({"kind": "mobile", "id": "13800138000"})
-        self.assertNotIn("13800138000", m)
-        self.assertIn("****", m)
         m2 = feishu.mask_target(
             {
                 "kind": "webhook",
@@ -3170,13 +3122,6 @@ class TestFeishu(unittest.TestCase):
             hmac.new(b"1690000000\nsecret", digestmod=hashlib.sha256).digest()
         ).decode()
         self.assertEqual(feishu.sign_secret("secret", 1690000000), expected)
-
-    def test_p08_api_host_follows_webhook_cloud(self):
-        self.assertEqual(feishu.api_host([]), "open.feishu.cn")
-        self.assertEqual(
-            feishu.api_host(["https://open.larksuite.com/open-apis/bot/v2/hook/x"]),
-            "open.larksuite.com",
-        )
 
     def test_p09_request_rejects_non_official_host_before_dial(self):
         """白名单外的域在守卫请求前就拒绝（不发任何网络请求）。"""
@@ -3231,71 +3176,6 @@ class TestFeishu(unittest.TestCase):
             with self.assertRaises(feishu.FeishuError):
                 feishu.send_webhook(t, "hi")
 
-    def test_p13_token_cache_single_fetch(self):
-        resp = json.dumps(
-            {"code": 0, "tenant_access_token": "t-1", "expire": 7200}
-        ).encode()
-        with mock.patch.object(feishu, "guarded_request", return_value=(200, resp)) as mk:
-            t1 = feishu.tenant_access_token("cli_a", "s1")
-            t2 = feishu.tenant_access_token("cli_a", "s1")
-        self.assertEqual(t1, "t-1")
-        self.assertEqual(t2, "t-1")
-        self.assertEqual(mk.call_count, 1)
-
-    def test_p14_send_app_text_routes_receive_id_type(self):
-        t = {"kind": "open_id", "id": "ou_x1"}
-        with (
-            mock.patch.object(feishu, "tenant_access_token", return_value="tok"),
-            mock.patch.object(
-                feishu, "guarded_request", return_value=(200, b'{"code": 0}')
-            ) as mk,
-        ):
-            feishu.send_app_text("cli_a", "s1", t, "hi")
-        path = mk.call_args.args[2]
-        self.assertTrue(path.endswith("receive_id_type=open_id"), path)
-        body = json.loads(mk.call_args.kwargs["body"].decode("utf-8"))
-        self.assertEqual(body["receive_id"], "ou_x1")
-        self.assertEqual(body["msg_type"], "text")
-        # content 为字符串化的 JSON（飞书 im/v1 协议要求）
-        self.assertEqual(json.loads(body["content"]), {"text": "hi"})
-
-    def test_p15_upload_image_multipart(self):
-        png = os.path.join(TEST_ROOT, "p15.png")
-        Path(png).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 500)
-        resp = json.dumps({"code": 0, "data": {"image_key": "img_k"}}).encode()
-        with (
-            mock.patch.object(feishu, "tenant_access_token", return_value="tok"),
-            mock.patch.object(feishu, "guarded_request", return_value=(200, resp)) as mk,
-        ):
-            key = feishu.upload_image("cli_a", "s1", png)
-        self.assertEqual(key, "img_k")
-        body = mk.call_args.kwargs["body"]
-        self.assertIn(b'name="image_type"', body)
-        self.assertIn(b'name="image"', body)
-        self.assertIn(
-            "multipart/form-data; boundary=",
-            mk.call_args.kwargs["headers"]["Content-Type"],
-        )
-
-    def test_p16_list_chats(self):
-        resp = json.dumps(
-            {
-                "code": 0,
-                "data": {
-                    "items": [
-                        {"chat_id": "oc_1", "name": "A群"},
-                        {"chat_id": "oc_2", "name": "B群"},
-                    ]
-                },
-            }
-        ).encode()
-        with (
-            mock.patch.object(feishu, "tenant_access_token", return_value="tok"),
-            mock.patch.object(feishu, "guarded_request", return_value=(200, resp)),
-        ):
-            out = feishu.list_chats("cli_a", "s1")
-        self.assertEqual(out, [("oc_1", "A群"), ("oc_2", "B群")])
-
 
 # ======================= 通用推送目标识别与行解析（oil_1010） =======================
 
@@ -3332,21 +3212,15 @@ class TestPushTarget(unittest.TestCase):
         self.assertIsNone(t)
         self.assertTrue(err)
 
-    def test_t05_app_kinds_and_list_semantics(self):
-        t, err = pushtarget.resolve_target("oc_g1", group=True)
-        self.assertEqual(t["kind"], "feishu_app")
-        t, err = pushtarget.resolve_target("oc_g1", group=False)
-        self.assertIsNone(t)
-        self.assertIn("群目标", err)
-        t, err = pushtarget.resolve_target("ou_x1", group=False)
-        self.assertEqual(t["kind"], "feishu_app")
-        t, err = pushtarget.resolve_target("ou_x1", group=True)
-        self.assertIsNone(t)
-        self.assertIn("个人目标", err)
-        t, err = pushtarget.resolve_target("13800138000", group=False)
-        self.assertEqual(t["feishu"]["kind"], "mobile")
-        t, err = pushtarget.resolve_target("a@b.co", group=False)
-        self.assertEqual(t["feishu"]["kind"], "email")
+    def test_t05_feishu_ids_rejected_with_umo_hint(self):
+        """飞书 ID 形态不再是目标：提示改用完整 UMO（经适配器发送）。"""
+        for raw in ("oc_g1", "ou_x1", "13800138000", "a@b.co"):
+            t, err = pushtarget.resolve_target(raw, group=True)
+            self.assertIsNone(t, raw)
+            self.assertIn("完整 UMO", err, raw)
+            t, err = pushtarget.resolve_target(raw, group=False)
+            self.assertIsNone(t, raw)
+            self.assertIn("完整 UMO", err, raw)
 
     def test_t06_invalid(self):
         for raw in ("", "hello", "ou", "oc", "a@"):
@@ -3368,17 +3242,21 @@ class TestPushRows(unittest.TestCase):
                 "time": "",
                 "limit": None,
             },
-            {"id": "oc_g1", "frequency": "", "time": "", "limit": None},
+            {"id": "猫饼:GroupMessage:oc_g1", "frequency": "", "time": "", "limit": None},
         ]
         self.prefs.config["basic"]["push_private_targets"] = [
-            {"id": "ou_x1", "frequency": "daily", "time": "20:30", "limit": None},
-            {"id": "13800138000", "frequency": "", "time": "", "limit": None},
+            {
+                "id": "default:FriendMessage:123",
+                "frequency": "daily",
+                "time": "20:30",
+                "limit": None,
+            },
+            {"id": "ou_x1", "frequency": "", "time": "", "limit": None},
         ]
         rows = self.prefs.push_rows()
         kinds = [r["kind"] for r in rows]
-        self.assertEqual(
-            kinds, ["feishu_webhook", "feishu_app", "feishu_app", "feishu_app"]
-        )
+        # ou_x1（飞书 ID 形态）不再识别为目标，被跳过
+        self.assertEqual(kinds, ["feishu_webhook", "umo", "umo"])
         self.assertEqual(rows[0]["feishu"]["secret"], "SEC")
         self.assertEqual(rows[2]["hour"], 20)
         self.assertEqual(rows[2]["minute"], 30)
@@ -3406,10 +3284,13 @@ class TestPushRows(unittest.TestCase):
                 }
             ],
             "push_private_targets": [
-                {"id": "ou_x1", "frequency": "weekly:4", "time": "12:30", "limit": None}
+                {
+                    "id": "猫饼:FriendMessage:ou_x1",
+                    "frequency": "weekly:4",
+                    "time": "12:30",
+                    "limit": None,
+                }
             ],
-            "feishu_app_id": "cli_a",
-            "feishu_app_secret": "s1",
         }
         # 其余必填字段从 web_payload 缺省补齐（模拟页面提交）
         payload = {**self.prefs.web_payload(), **payload}
@@ -3428,14 +3309,19 @@ class TestPushRows(unittest.TestCase):
         )
         self.assertEqual(
             b["push_private_targets"],
-            [{"id": "ou_x1", "frequency": "weekly:4", "time": "12:30", "limit": None}],
+            [
+                {
+                    "id": "猫饼:FriendMessage:ou_x1",
+                    "frequency": "weekly:4",
+                    "time": "12:30",
+                    "limit": None,
+                }
+            ],
         )
-        self.assertEqual(self.prefs.config["api"]["feishu_app_id"], "cli_a")
-        # 往返再读：行与凭证保持一致
+        # 往返再读：行保持一致
         p = self.prefs.web_payload()
         self.assertEqual(p["push_group_targets"], b["push_group_targets"])
         self.assertEqual(p["push_private_targets"], b["push_private_targets"])
-        self.assertTrue(p["feishu_app_ready"])
 
     def test_q04_validation_errors(self):
         payload = {**self.prefs.web_payload()}
@@ -3453,8 +3339,6 @@ class TestPushRows(unittest.TestCase):
                     {"id": "10003", "frequency": "", "time": "", "limit": -5},
                     {"id": "10003", "frequency": "", "time": "", "limit": "很多"},
                 ],
-                "feishu_app_id": "cli_a",
-                "feishu_app_secret": "",
             }
         )
         errs = self.prefs.apply_web_update(payload)
@@ -3463,7 +3347,6 @@ class TestPushRows(unittest.TestCase):
         self.assertTrue(any("时刻" in e for e in errs))
         self.assertTrue(any("限额" in e for e in errs))
         self.assertTrue(any("整数" in e for e in errs))
-        self.assertTrue(any("成对" in e for e in errs))
         # 校验失败不落盘：默认行保持不变
         self.assertEqual(
             self.prefs.config["basic"]["push_group_targets"],
@@ -3479,7 +3362,6 @@ class TestPushRows(unittest.TestCase):
             [{"id": "10001", "frequency": "", "time": "", "limit": None}],
         )
         self.assertEqual(p["push_private_targets"], [])
-        self.assertFalse(p["feishu_app_ready"])
         # 默认行继承全局调度
         rows = self.prefs.push_rows()
         self.assertEqual(len(rows), 1)
@@ -3589,6 +3471,37 @@ class TestSeenSessionHandlers(unittest.IsolatedAsyncioTestCase):
         data = json.loads(resp.body)
         self.assertEqual(data["sessions"][0]["umo"], "default:GroupMessage:10001")
         self.assertEqual(data["sessions"][0]["bot"], "default")
+
+    async def test_s07_core_sessions_merged(self):
+        """sessions 数据源以核心库 umo_aliases 为主、被动记录为补充合并。"""
+        import sqlite3
+
+        data_root = os.path.join(TEST_ROOT, "core_data", self.id().split(".")[-1])
+        shutil.rmtree(data_root, ignore_errors=True)
+        os.makedirs(data_root, exist_ok=True)
+        con = sqlite3.connect(os.path.join(data_root, "data_v4.db"))
+        con.execute(
+            "create table umo_aliases (created_at text, updated_at text, id integer,"
+            " umo text, creator_sender_id text, auto_name text, user_alias text)"
+        )
+        con.execute(
+            "insert into umo_aliases (umo, auto_name, user_alias) values"
+            " ('猫饼:GroupMessage:oc_1', '油价群', '')"
+        )
+        con.commit()
+        con.close()
+        pl, _ctx, _cfg = make_plugin(name="s07")
+        pl.store.record_seen_session("default:GroupMessage:10001", "小明")
+        with mock.patch.object(
+            plugin_main, "get_astrbot_data_path", return_value=data_root
+        ):
+            sessions = pl._all_sessions()
+        umos = {s["umo"] for s in sessions}
+        self.assertEqual(umos, {"猫饼:GroupMessage:oc_1", "default:GroupMessage:10001"})
+        core = next(s for s in sessions if s["umo"] == "猫饼:GroupMessage:oc_1")
+        self.assertEqual(core["label"], "油价群")
+        self.assertEqual(core["bot"], "猫饼")
+        self.assertEqual(core["kind"], "group")
 
 
 # ======================= 真实 API 冒烟（可选） =======================

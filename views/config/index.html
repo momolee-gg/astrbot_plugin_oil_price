@@ -328,21 +328,21 @@
 
     <div class="field">
       <div class="label">👥 群聊推送目标（任意平台，通用格式）</div>
-      <div class="hint">每行一个目标，格式自动识别：QQ群号（纯数字）、完整 UMO（任意平台，格式 平台:消息类型:群号）、飞书群 webhook（地址##加签密钥）、飞书 chat_id（oc_…，可发 /飞书群列表 查询）。频率/时刻留空跟随上方默认调度；限额仅对 QQ 类目标参与每日查询配额计量</div>
+      <div class="hint">每行一个目标，格式自动识别：QQ群号（纯数字）、完整 UMO（任意平台，格式 平台:消息类型:群号，飞书选 猫饼:GroupMessage:oc_…）、飞书群 webhook（地址##加签密钥）。频率/时刻留空跟随上方默认调度；限额仅对 QQ 类目标参与每日查询配额计量</div>
       <div id="groupRows"></div>
       <button type="button" class="ghost tadd" id="groupAdd">＋ 添加群聊目标</button>
     </div>
 
     <div class="field">
       <div class="label">👤 个人推送目标（任意平台，通用格式）</div>
-      <div class="hint">每行一个目标，格式自动识别：QQ号（纯数字）、完整 UMO、飞书 ou_ /手机号/邮箱（需在「接口配置」填写自建应用凭证，可收海报图片）。调度语义同群聊列表</div>
+      <div class="hint">每行一个目标，格式自动识别：QQ号（纯数字）、完整 UMO（飞书选 猫饼:FriendMessage:ou_…）。文字与海报图片均由 AstrBot 平台适配器发送，无需任何飞书凭证。调度语义同群聊列表</div>
       <div id="privRows"></div>
       <button type="button" class="ghost tadd" id="privAdd">＋ 添加个人目标</button>
     </div>
 
     <div class="field">
       <div class="label">📋 从记录会话选择（可选辅助）</div>
-      <div class="hint">插件运行期间见过的会话，按机器人分组；点选即添加为目标行（群/私自动归类，调度跟随默认）。仅含插件运行期间收过消息的会话；webhook/手机号等非 UMO 目标仍需手动添加</div>
+      <div class="hint">机器人已记录的会话来源（AstrBot 核心记录，打开即有历史数据），按机器人分组；点选即添加为目标行（群/私自动归类，调度跟随默认）。webhook 等非 UMO 目标仍需手动添加</div>
       <button type="button" class="ghost" id="sessionPickBtn">📋 展开会话列表</button>
       <div id="sessionPickPanel" class="pick-panel hidden">
         <div class="pick-bots" id="pickBots"></div>
@@ -399,14 +399,8 @@
     </div>
 
     <div class="field">
-      <div class="label">🕊️ 飞书自建应用
-        <span class="badge ok" id="feishuAppBadge" style="display:none">已配置</span>
-      </div>
-      <div class="hint">飞书开放平台「企业自建应用」凭证，成对填写后飞书个人/群目标与海报图片推送才可用；应用需开通「获取与发送单聊、群组消息」权限（im:message），用手机号/邮箱定位用户还需「根据手机号或邮箱获取用户 ID」权限，并发布版本</div>
-      <div class="inline">
-        <div><input type="text" id="feishu_app_id" autocomplete="off" spellcheck="false" placeholder="cli_a5xxxxxx"></div>
-        <div><input type="text" id="feishu_app_secret" autocomplete="off" spellcheck="false" placeholder="应用 App Secret"></div>
-      </div>
+      <div class="label">🕊️ 飞书推送说明</div>
+      <div class="hint">飞书个人/群消息统一走 AstrBot「消息平台」里已配置的飞书适配器发送（完整 UMO 目标，图片由适配器上传），插件无需也不读取飞书凭证；群自定义机器人 webhook 是与适配器无关的轻量通道（仅文字）</div>
     </div>
   </div>
 
@@ -582,7 +576,7 @@
     });
     if (!items.length) {
       box.innerHTML =
-        '<div class="session-empty">暂无记录（机器人收到消息后自动积累；可在目标会话里先随便说句话）</div>';
+        '<div class="session-empty">机器人尚无会话记录（收到消息后 AstrBot 会自动登记会话来源）</div>';
       return;
     }
     items.forEach((s) => {
@@ -809,9 +803,6 @@
     $("groupRows").innerHTML = "";
     (cfg.push_group_targets || []).forEach((t) => addPushRow("groupRows", t, PUSH_GROUP_PH));
     if (!(cfg.push_group_targets || []).length) addPushRow("groupRows", {}, PUSH_GROUP_PH);
-    $("feishu_app_id").value = cfg.feishu_app_id || "";
-    $("feishu_app_secret").value = cfg.feishu_app_secret || "";
-    $("feishuAppBadge").style.display = cfg.feishu_app_ready ? "" : "none";
     $("user_daily_limit").value = cfg.user_daily_limit;
     cfgFuel.options = cfg.fuel_options || ["92", "95", "98", "0", "89"];
     cfgFuel.selected = (cfg.default_fuels || []).slice();
@@ -841,9 +832,7 @@
       push_private_targets: collectPushRows("privRows"),
       user_daily_limit: parseInt($("user_daily_limit").value || "0", 10),
       default_fuels: cfgFuel.selected,
-      app_key: $("appkey").value.trim(),
-      feishu_app_id: $("feishu_app_id").value.trim(),
-      feishu_app_secret: $("feishu_app_secret").value.trim()
+      app_key: $("appkey").value.trim()
     };
   }
 

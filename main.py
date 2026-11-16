@@ -4,8 +4,8 @@
   modules/constants.py   全局常量（零依赖）
   modules/netguard.py    共享出网守卫（公网解析校验 + IP 直连防 rebinding）
   modules/datasource.py  ShowAPI 数据源客户端
-  modules/feishu.py      飞书推送客户端（webhook + 自建应用 im/v1）
-  modules/pushtarget.py  通用推送目标识别器（QQ/UMO/飞书 webhook/应用目标）
+  modules/feishu.py      飞书群自定义机器人 webhook 客户端
+  modules/pushtarget.py  通用推送目标识别器（QQ/UMO/飞书 webhook）
   modules/storage.py     本地存储（查询历史 / 用户配额 / 查询偏好事件）
   modules/reporting.py   文字文案（单省报告 / 多省速览 / 倒计时 / 上涨提醒）
   modules/charts.py      PIL 渲染（单油卡 / 结算单 / 折线图）
@@ -17,7 +17,7 @@
 按调价窗口相位组织；auto_provinces 开启时按目标近期查询偏好分省份集推送。
 通用推送（oil_1010）：目标行不区分平台（QQ/UMO/飞书 webhook/应用目标格式自动识别），
 调度=全局默认+行内可覆盖；主循环按「时:分」分槽批量执行，去重状态键=行标识::省集，
-发送按行能力分发（umo 走 UMO 主动消息、feishu 行走 webhook/自建应用）。
+发送按行能力分发（umo 走 UMO 主动消息由平台适配器送达、feishu 行走 webhook 直发）。
 """
 
 import asyncio
@@ -25,6 +25,7 @@ import base64
 import hashlib
 import json
 import os
+import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
@@ -426,7 +427,7 @@ class OilPricePlugin(Star):
         不发——当天由官方公告推送接管（oil_1008，措辞「预计/已公告」严格分型）。
         文案含每省倒计时与当前油价明细。gen_enable 开且端点可用走 AI 海报
         （单省=文字+图片、多省=仅图片），失败回退纯文字；图片能力按行判定
-        （umo 行可收图、feishu_app 行需凭证、webhook 行仅文字）。
+        （umo 行可收图、webhook 行仅文字）。
 
         force=True（/油价调整 手动触发）：无视 change_remind_days 开关、≤N 天门控
         与当日去重，窗口日也发送（官方口径优先，build_remind_text 按 fc 分型）；
@@ -607,8 +608,8 @@ class OilPricePlugin(Star):
 
         图片消息开关（gen_enable）：开且生图端点可用 → 单省=文字+图片两条，
         多省=仅图片；关或端点不可用 → 只发文字版。出图失败自动回退文字，不断播。
-        图片能力按行判定（oil_1010）：umo 行 / 有凭证的 feishu_app 行可收图；
-        仅文字行（webhook、无凭证 feishu_app）在多省仅图片时改收速览文字。
+        图片能力按行判定（oil_1010）：umo 行可收图（适配器发送）、webhook 行仅文字；
+        多省仅图片时 webhook 行改收速览文字。
         """
         today = self.store.today()
         targets = targets if targets is not None else self.prefs.push_rows()
@@ -869,55 +870,29 @@ class OilPricePlugin(Star):
         return mc
 
     def _row_image_capable(self, row: dict) -> bool:
-        """该行能否收图片消息：umo 行可；feishu_app 行需自建应用凭证；
-        feishu_webhook 行官方限制不能收图。"""
-        if row["kind"] == "umo":
-            return True
-        if row["kind"] == "feishu_app":
-            return self.prefs.feishu_app_ready()
-        return False
-
-    def _feishu_api_host(self) -> str:
-        """应用接口域名跟随机器人所在云：有国际版 webhook 则同域，否则国内版。"""
-        return feishu.api_host(
-            [r["raw"] for r in self.prefs.push_rows() if r["kind"] == "feishu_webhook"]
-        )
+        """该行能否收图片消息：umo 行由平台适配器发送（适配器自行处理飞书
+        图片上传等）；feishu_webhook 行官方限制不能收图，仅文字。"""
+        return row["kind"] == "umo"
 
     async def _push_text(self, text: str, rows: list = None):
-        """按行发文字：umo 行走 UMO 主动消息（同链批量），feishu 行逐目标走
-        webhook/应用；单行失败记日志不断播。"""
+        """按行发文字：umo 行走 UMO 主动消息（同链批量），feishu_webhook 行
+        逐目标直发；单行失败记日志不断播。"""
         rows = rows if rows is not None else self.prefs.push_rows()
         umos = [r["umo"] for r in rows if r["kind"] == "umo"]
         if umos:
             await self._deliver([Plain(text)], umos)
-        app_id, app_secret = self.prefs.feishu_app_id(), self.prefs.feishu_app_secret()
-        host = self._feishu_api_host()
         for row in rows:
+            if row["kind"] != "feishu_webhook":
+                continue
             try:
-                if row["kind"] == "feishu_webhook":
-                    await asyncio.to_thread(feishu.send_webhook, row["feishu"], text)
-                    logger.info(
-                        f"[油价插件] 已推送至飞书 {feishu.mask_target(row['feishu'])}"
-                    )
-                elif row["kind"] == "feishu_app":
-                    if not app_id or not app_secret:
-                        raise feishu.FeishuError("未配置飞书自建应用凭证")
-                    await asyncio.to_thread(
-                        feishu.send_app_text, app_id, app_secret, row["feishu"], text, host
-                    )
-                    logger.info(
-                        f"[油价插件] 已推送至飞书 {feishu.mask_target(row['feishu'])}"
-                    )
+                await asyncio.to_thread(feishu.send_webhook, row["feishu"], text)
+                logger.info(f"[油价插件] 已推送至飞书 {feishu.mask_target(row['feishu'])}")
             except Exception as e:
                 logger.error(f"[油价插件] 飞书推送到 {row['identity'][:24]} 失败: {e}")
 
     async def _push_image(self, path: str, rows: list = None):
-        """按行发图片：umo 行走 UMO；feishu_app 行走应用上传（feishu_webhook 行
-        官方限制不能收图，调用方按能力矩阵分流不会传入）。
-
-        上传是飞书侧的渠道级失败：整体抛出，由调用方走「出图失败回退文字」语义；
-        已传后的单目标发送失败仅记日志（与 UMO 渠道的逐目标容错一致）。
-        """
+        """按行发图片：仅 umo 行（feishu_webhook 行官方限制不能收图，调用方按
+        能力矩阵分流不会传入）；飞书图片由平台适配器用平台自带凭证上传。"""
         rows = (
             rows
             if rows is not None
@@ -926,34 +901,6 @@ class OilPricePlugin(Star):
         umos = [r["umo"] for r in rows if r["kind"] == "umo"]
         if umos:
             await self._deliver([BotImage.fromFileSystem(path)], umos)
-        feishu_rows = [r for r in rows if r["kind"] == "feishu_app"]
-        if not feishu_rows:
-            return
-        app_id, app_secret = self.prefs.feishu_app_id(), self.prefs.feishu_app_secret()
-        if not app_id or not app_secret:
-            logger.warning("[油价插件] feishu_app 行缺自建应用凭证，跳过图片消息")
-            return
-        host = self._feishu_api_host()
-        try:
-            image_key = await asyncio.to_thread(
-                feishu.upload_image, app_id, app_secret, path, host
-            )
-        except Exception as e:
-            raise feishu.FeishuError(f"海报上传飞书失败: {e}") from e
-        for row in feishu_rows:
-            try:
-                await asyncio.to_thread(
-                    feishu.send_app_image,
-                    app_id,
-                    app_secret,
-                    row["feishu"],
-                    path,
-                    image_key,
-                    host,
-                )
-                logger.info(f"[油价插件] 已推送至飞书 {feishu.mask_target(row['feishu'])}")
-            except Exception as e:
-                logger.error(f"[油价插件] 飞书推送到 {row['identity'][:24]} 失败: {e}")
 
     def _cleanup_tmp(self):
         """临时图片按 mtime TTL 清理（oil_1002）：AI 海报与各类当日产物 3 天、
@@ -1068,8 +1015,61 @@ class OilPricePlugin(Star):
         return json_response({"ok": True})
 
     async def _web_sessions_list(self):
-        """见过的会话列表（设置页「从记录会话选择」数据源，含机器人层）。"""
-        return json_response({"sessions": self.store.all_seen_sessions()})
+        """「从记录会话选择」数据源：AstrBot 核心会话来源记录（umo_aliases，
+        只读）为主、插件被动记录（含最近活跃时间）为补充，按 umo 合并去重。"""
+        return json_response({"sessions": self._all_sessions()})
+
+    def _core_sessions(self) -> list:
+        """只读读取 AstrBot 核心的会话来源记录（umo_aliases 表）。
+
+        该表即原生「选择会话来源」组件的数据源（umo + 自动命名 + 用户别名）；
+        表不存在或读取失败时返回空列表，选择器回退插件被动记录。
+        """
+        db_path = os.path.join(get_astrbot_data_path(), "data_v4.db")
+        if not os.path.isfile(db_path):
+            return []
+        try:
+            con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+            try:
+                rows = con.execute(
+                    "select umo, coalesce(nullif(user_alias, ''), auto_name) "
+                    "from umo_aliases order by updated_at desc"
+                ).fetchall()
+            finally:
+                con.close()
+        except Exception as e:
+            logger.warning(f"[油价插件] 核心会话记录读取失败: {e}")
+            return []
+        out = []
+        for umo, name in rows:
+            out.append(
+                {
+                    "umo": umo,
+                    "bot": umo.split(":", 1)[0] if ":" in umo else "",
+                    "kind": self.store._session_kind(umo),
+                    "label": str(name or ""),
+                }
+            )
+        return out
+
+    def _all_sessions(self) -> list:
+        """核心会话记录与插件被动记录按 umo 合并（核心在前，标签取更全者）。"""
+        merged = {}
+        for s in self.store.all_seen_sessions() + self._core_sessions():
+            umo = s["umo"]
+            if umo in merged:
+                kept = merged[umo]
+                if not kept.get("label"):
+                    kept["label"] = s.get("label") or ""
+                kept.setdefault("last", s.get("last") or "")
+                kept.setdefault("first", s.get("first") or "")
+                if not kept.get("kind"):
+                    kept["kind"] = s.get("kind") or ""
+                continue
+            merged[umo] = dict(s)
+        out = list(merged.values())
+        out.sort(key=lambda s: s.get("last") or "", reverse=True)
+        return out
 
     # ================= WebUI：统计页 API =================
 
@@ -1528,33 +1528,4 @@ class OilPricePlugin(Star):
                 if rows
                 else "未配置推送目标（请在设置页添加目标行）"
             )
-        )
-
-    @filter.command("飞书群列表")
-    async def feishu_chats_cmd(self, event: AstrMessageEvent):
-        """列出飞书应用机器人已加入的群（chat_id），供配置群推送目标"""
-        if not self.prefs.feishu_app_ready():
-            yield event.plain_result(
-                "⚠️ 请先在 WebUI「油价设置 → 接口配置」填写飞书自建应用 "
-                "app_id 与 app_secret，并把应用机器人拉进群"
-            )
-            return
-        try:
-            chats = await asyncio.to_thread(
-                feishu.list_chats,
-                self.prefs.feishu_app_id(),
-                self.prefs.feishu_app_secret(),
-                self._feishu_api_host(),
-            )
-        except Exception as e:
-            yield event.plain_result(f"查询失败：{e}")
-            return
-        if not chats:
-            yield event.plain_result(
-                "机器人尚未加入任何飞书群（请先在群设置→群机器人→添加应用机器人）"
-            )
-            return
-        lines = [f"· {name}：{cid}" for cid, name in chats]
-        yield event.plain_result(
-            "📋 机器人已加入的群（chat_id 可填入群推送目标）：\n" + "\n".join(lines)
         )
