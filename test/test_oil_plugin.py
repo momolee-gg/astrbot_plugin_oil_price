@@ -1245,15 +1245,11 @@ class TestCharts(unittest.TestCase):
         rows = [("江苏", self._data()), ("上海", {"fuels": {}, "next_change_time": ""})]
         self.assertTrue(self.png_ok(charts.render_multi_card(rows, "2026-10-23", self.out)))
 
-    def test_f05_price_card_and_receipt(self):
-        p1 = charts.render_price_card(
-            "江苏", "92号汽油", 8.09, 0.1, 1.2, "2026-10-23", self.out
-        )
-        p2 = charts.render_receipt(
+    def test_f05_receipt(self):
+        p = charts.render_receipt(
             30, 8.09, 242.7, "江苏", "92号汽油", 3.0, "2026-10-23", self.out
         )
-        self.assertTrue(self.png_ok(p1))
-        self.assertTrue(self.png_ok(p2))
+        self.assertTrue(self.png_ok(p))
 
     def test_f06_line_chart_multi_lines(self):
         store = Store(os.path.join(self.out, "h.json"), os.path.join(self.out, "q.json"))
@@ -2124,16 +2120,6 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             self.plugin.store.today(),
         )
 
-    async def test_a07_look_hit(self):
-        ev = MockEvent()
-        out = await run_cmd(self.plugin.look_cmd(ev, "广东", "92"))
-        self.assertEqual(out[0]["type"], "chain")
-
-    async def test_a08_look_miss(self):
-        ev = MockEvent()
-        out = await run_cmd(self.plugin.look_cmd(ev, "广东", "101"))
-        self.assertIn("没有查到", out[0]["text"])
-
     async def test_a09_refuel_ok(self):
         ev = MockEvent()
         out = await run_cmd(self.plugin.refuel_cmd(ev, "30", "广东", "95"))
@@ -2204,17 +2190,15 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.cfg["basic"]["default_fuels"] = ["92"]
         self.assertEqual(self.plugin.prefs.main_fuel(), "92")
         ev = MockEvent()
-        out = await run_cmd(self.plugin.look_cmd(ev, "", ""))  # 缺省 → 92 号
+        out = await run_cmd(self.plugin.refuel_cmd(ev, "30"))  # 缺省 → 92 号
         self.assertEqual(out[0]["type"], "chain")
 
     # ---------- 门控（TC-H） ----------
     async def test_h01_no_appkey_blocks_commands(self):
         pl, ctx, _ = make_plugin(name=self.id().split(".")[-1] + "nokey", appkey="")
-        ev = MockEvent()
         for cmd, args in (
             (pl.oil_price_cmd, ("",)),
             (pl.today_cmd, ("",)),
-            (pl.look_cmd, ("", "")),
             (pl.refuel_cmd, ("30",)),
             (pl.adjust_window_cmd, ()),
             (pl.push_test_cmd, ()),
@@ -2987,7 +2971,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((rows2[0]["hour"], rows2[0]["minute"]), (9, 0))
 
     async def test_x09_adjust_push_cmd_force_semantics(self):
-        """/油价调整：手动触发调价提醒——无视去重与 ≤N 天门控，且不写去重状态。"""
+        """/油价推送测试 调价：手动触发调价提醒——无视去重与 ≤N 天门控，且不写去重状态。"""
         cfg = self._rows_config(
             group_rows=[self._row("https://open.feishu.cn/open-apis/bot/v2/hook/abc")]
         )
@@ -3009,7 +2993,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         for p in patches:
             p.start()
         try:
-            out = await run_cmd(pl.price_adjust_push_cmd(MockEvent()))
+            out = await run_cmd(pl.push_test_cmd(MockEvent(), "调价"))
         finally:
             for p in patches:
                 p.stop()
@@ -3022,14 +3006,14 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         for p in patches:
             p.start()
         try:
-            out = await run_cmd(pl.price_adjust_push_cmd(MockEvent()))
+            out = await run_cmd(pl.push_test_cmd(MockEvent(), "调价"))
         finally:
             for p in patches:
                 p.stop()
         self.assertEqual(len(hook_texts), 2)
 
     async def test_x10_adjust_push_cmd_no_window(self):
-        """/油价调整：数据源无下次调价日期时不推送并如实提示。"""
+        """/油价推送测试 调价：数据源无下次调价日期时不推送并如实提示。"""
         pl, ctx, _cfg = make_plugin(name="x10")
 
         def fake(prov, key):
@@ -3038,9 +3022,54 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
             return d
 
         with mock.patch.object(plugin_main.datasource, "fetch_province", side_effect=fake):
-            out = await run_cmd(pl.price_adjust_push_cmd(MockEvent()))
+            out = await run_cmd(pl.push_test_cmd(MockEvent(), "调价"))
         self.assertIn("未能推送", out[-1]["text"])
         self.assertEqual(len(ctx.sent_messages), 0)
+
+    async def test_x11_advance_remind_mixed_rows_routing(self):
+        """混合目标组按行分流：umo=文字+海报、webhook=仅文字（能力不再取首行）。"""
+        cfg = self._rows_config(
+            group_rows=[
+                self._row("10001"),
+                self._row("https://open.feishu.cn/open-apis/bot/v2/hook/abc"),
+            ],
+        )
+        pl, ctx, cfg = make_plugin(name="x11", config=cfg)
+        cfg["basic"]["change_remind_days"] = 3
+        hook_texts = []
+        patches = [
+            mock.patch.object(
+                plugin_main.datasource,
+                "fetch_province",
+                side_effect=fetch_with_window(2),
+            ),
+            mock.patch.object(
+                feishu,
+                "send_webhook",
+                side_effect=lambda t, text: hook_texts.append(text),
+            ),
+            mock.patch.object(
+                pl,
+                "get_or_gen_image",
+                new_callable=mock.AsyncMock,
+                return_value="p.png",
+            ),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            ok = await pl._advance_remind(
+                [("江苏", await pl._get_today("江苏"))], pl.prefs.push_rows()
+            )
+        finally:
+            for p in patches:
+                p.stop()
+        self.assertTrue(ok)
+        self.assertEqual(len(hook_texts), 1)  # webhook 仅文字
+        umo_sends = [umo for umo, _ in ctx.sent_messages]
+        self.assertEqual(
+            umo_sends.count("default:GroupMessage:10001"), 2
+        )  # umo = 文字 + 海报
 
 
 # ======================= 出网守卫（netguard，v1.5 提取共享） =======================

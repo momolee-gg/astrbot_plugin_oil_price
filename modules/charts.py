@@ -1539,42 +1539,7 @@ def render_multi_card(
     return _save(out, tmp_dir, f"report_multi_{today}.png")
 
 
-# ==================== 单油种卡 / 加油小票 ====================
-
-
-def render_price_card(
-    prov: str, fuel_name: str, price: float, change, pct, today: str, tmp_dir: str
-) -> str:
-    """单油种大字卡片。"""
-    W, H = 760, 520
-    img = Image.new("RGB", (W, H), C_BG)
-    d = ImageDraw.Draw(img)
-    f_sub, f_big, f_unit, f_mid = _font(26), _font(120), _font(28), _font(30)
-
-    d.rounded_rectangle((30, 30, W - 30, H - 30), radius=24, fill=C_PANEL)
-    title = f"{prov} · {fuel_name}"
-    d.text(((W - d.textlength(title, font=f_mid)) / 2, 80), title, font=f_mid, fill=C_MAIN)
-    pw = d.textlength(f"{price:g}", font=f_big)
-    d.text(((W - pw) / 2, 160), f"{price:g}", font=f_big, fill=C_MAIN)
-    d.text(
-        ((W - d.textlength("元/升", font=f_unit)) / 2, 300),
-        "元/升",
-        font=f_unit,
-        fill=C_SUB,
-    )
-
-    t, col = _diff(change)
-    line = f"较上次调价 {t}" if change is not None else "较上次调价 —"
-    if change is not None and pct is not None:
-        line += f"（{pct:+.2f}%）"
-    d.text(((W - d.textlength(line, font=f_mid)) / 2, 372), line, font=f_mid, fill=col)
-    d.text(
-        ((W - d.textlength(today, font=f_sub)) / 2, H - 96),
-        today,
-        font=f_sub,
-        fill=C_SUB,
-    )
-    return _save(img, tmp_dir, f"price_{prov}_{today}.png")
+# ==================== 加油小票 ====================
 
 
 def render_receipt(
