@@ -169,7 +169,10 @@ class Prefs:
         return rows
 
     def _parse_push_row(self, item, group: bool):
-        """单行配置 → 解析后的目标行；非法行返回 None 并记日志。"""
+        """单行配置 → 解析后的目标行；非法行返回 None 并记日志。
+
+        name 为可选展示名（会话选择器/订阅写入的人名或群名），仅用于展示。
+        """
         if not isinstance(item, dict):
             _log.warning("[油价插件] 推送目标行格式不正确，已跳过")
             return None
@@ -191,6 +194,7 @@ class Prefs:
                 limit = None
         return {
             "raw": t["raw"],
+            "name": str(item.get("name") or "").strip()[:60],
             "kind": t["kind"],
             "identity": t["identity"],
             "umo": t["umo"],
@@ -246,7 +250,7 @@ class Prefs:
     # ---------- Web 载荷 ----------
 
     def _stored_push_rows(self, key: str) -> list:
-        """读取已存储的目标行（规整为 {id, frequency, time, limit} 展示形状）。"""
+        """读取已存储的目标行（规整为 {id, name, frequency, time, limit} 展示形状）。"""
         raw = self._get("basic", key, []) or []
         out = []
         for item in raw if isinstance(raw, list) else []:
@@ -258,6 +262,7 @@ class Prefs:
             out.append(
                 {
                     "id": str(item.get("id") or ""),
+                    "name": str(item.get("name") or ""),
                     "frequency": str(item.get("frequency") or ""),
                     "time": str(item.get("time") or ""),
                     "limit": limit,
@@ -408,7 +413,13 @@ class Prefs:
                     continue
                 seen.add(t["identity"])
                 out.append(
-                    {"id": t["raw"], "frequency": freq, "time": time_s, "limit": lim_i}
+                    {
+                        "id": t["raw"],
+                        "name": str(row.get("name") or "").strip()[:60],
+                        "frequency": freq,
+                        "time": time_s,
+                        "limit": lim_i,
+                    }
                 )
             return out
 

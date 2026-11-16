@@ -43,12 +43,14 @@ def resolve_target(raw: str, group: bool = True):
         if not f or f["kind"] != "webhook":
             return None, err or "webhook 仅支持飞书官方自定义机器人地址"
         return _pack("feishu_webhook", t, feishu=f), ""
-    # 2) 飞书 ID 形态（ou_/oc_/on_/手机号/邮箱）：不再是目标，提示改用完整 UMO
-    if t.startswith(("ou_", "oc_", "on_")) or "@" in t or _MOBILE_RE.match(t):
-        return None, "飞书个人/群消息请填完整 UMO（平台:类型:ID），可从会话选择器点选"
-    # 3) 完整 UMO：含冒号的非 URL 串原样通过（任意 AstrBot 平台通用）
+    # 2) 完整 UMO：含冒号的非 URL 串原样通过（任意 AstrBot 平台通用）。
+    #    必须先于「邮箱/飞书 ID」判断——如微信 UMO 的 ID 含 @im.wechat、
+    #    会话 ID 可能以 ou_/oc_ 开头，均属合法 UMO 而非邮箱/裸 ID
     if ":" in t:
         return _pack("umo", t, umo=t), ""
+    # 3) 飞书 ID 形态（ou_/oc_/on_/手机号/邮箱）：不再是目标，提示改用完整 UMO
+    if t.startswith(("ou_", "oc_", "on_")) or "@" in t or _MOBILE_RE.match(t):
+        return None, "飞书个人/群消息请填完整 UMO（平台:类型:ID），可从会话选择器点选"
     # 4) 纯数字：QQ 号/群号（按列表语义补前缀）；其余无法识别
     if t.isdigit():
         umo = (GROUP_TARGET_PREFIX if group else PRIVATE_TARGET_PREFIX) + t

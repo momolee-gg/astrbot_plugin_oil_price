@@ -276,14 +276,15 @@ class TestPrefsValidation(unittest.TestCase):
         self.assertFalse(b["monthly_push"])
         self.assertEqual(
             b["push_private_targets"],
-            [{"id": "123456001", "frequency": "", "time": "", "limit": 10}],
+            [{"id": "123456001", "name": "", "frequency": "", "time": "", "limit": 10}],
         )
         self.assertEqual(
             b["push_group_targets"],
             [
-                {"id": "10001", "frequency": "", "time": "", "limit": None},
+                {"id": "10001", "name": "", "frequency": "", "time": "", "limit": None},
                 {
                     "id": "default:GroupMessage:20002",
+                    "name": "",
                     "frequency": "daily",
                     "time": "08:30",
                     "limit": 0,
@@ -332,9 +333,10 @@ class TestPrefsValidation(unittest.TestCase):
         self.assertEqual(
             self.prefs.config["basic"]["push_group_targets"],
             [
-                {"id": "10001", "frequency": "", "time": "", "limit": 4},
+                {"id": "10001", "name": "", "frequency": "", "time": "", "limit": 4},
                 {
                     "id": "default:GroupMessage:30003",
+                    "name": "",
                     "frequency": "",
                     "time": "",
                     "limit": None,
@@ -413,7 +415,7 @@ class TestPrefsValidation(unittest.TestCase):
         payload = rebuilt.web_payload()
         self.assertEqual(
             payload["push_private_targets"],
-            [{"id": "123456001", "frequency": "", "time": "", "limit": 10}],
+            [{"id": "123456001", "name": "", "frequency": "", "time": "", "limit": 10}],
         )
 
     def test_c23_unknown_target_uses_global_default(self):
@@ -435,7 +437,7 @@ class TestPrefsValidation(unittest.TestCase):
         rebuilt = AstrBotConfig(config_path=path, schema=schema)
         self.assertEqual(
             rebuilt["basic"]["push_private_targets"],
-            [{"id": "123456001", "frequency": "", "time": "", "limit": 10}],
+            [{"id": "123456001", "name": "", "frequency": "", "time": "", "limit": 10}],
         )
         self.assertEqual(
             Prefs(rebuilt).quota_limit_for("default:FriendMessage:123456001"), 10
@@ -2765,11 +2767,11 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cfg["basic"]["provinces"], ["广东"])
         self.assertEqual(
             cfg["basic"]["push_private_targets"],
-            [{"id": "123456001", "frequency": "", "time": "", "limit": 9}],
+            [{"id": "123456001", "name": "", "frequency": "", "time": "", "limit": 9}],
         )
         self.assertEqual(
             cfg["basic"]["push_group_targets"],
-            [{"id": "10001", "frequency": "", "time": "", "limit": 4}],
+            [{"id": "10001", "name": "", "frequency": "", "time": "", "limit": 4}],
         )
         self.assertTrue(pl._loop_started)  # TC-C16：appKey 就绪自动补启定时器
 
@@ -2787,6 +2789,49 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("/astrbot_plugin_oil_price/stats/render", routes)
         self.assertIn("/astrbot_plugin_oil_price/prefs/list", routes)
         self.assertIn("/astrbot_plugin_oil_price/prefs/manage", routes)
+        self.assertIn("/astrbot_plugin_oil_price/sessions/list", routes)
+        self.assertIn("/astrbot_plugin_oil_price/targets/test", routes)
+
+    async def test_x11_web_target_test(self):
+        """/targets/test：向单个目标行发测试消息；未保存的行也能测。"""
+        pl, ctx, _cfg = make_plugin(name="x11")
+        # 成功：umo 行收到测试消息
+        with mock.patch.object(plugin_main, "request", FakeRequest({"id": "10001"})):
+            resp = await pl._web_target_test()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(ctx.sent_messages), 1)
+        parts = ctx.sent_messages[0][1].chain
+        text = "".join(p.text for p in parts if type(p).__name__.endswith("Plain"))
+        self.assertIn("测试消息", text)
+        # 微信 UMO（含 @）同样放行
+        with mock.patch.object(
+            plugin_main,
+            "request",
+            FakeRequest({"id": "微信_猫饼:FriendMessage:o9cq@im.wechat"}),
+        ):
+            resp = await pl._web_target_test()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(ctx.sent_messages), 2)
+        # 缺 id → 400
+        with mock.patch.object(plugin_main, "request", FakeRequest({})):
+            resp = await pl._web_target_test()
+        self.assertEqual(resp.status_code, 400)
+        # 非法目标 → 400
+        with mock.patch.object(plugin_main, "request", FakeRequest({"id": "hello"})):
+            resp = await pl._web_target_test()
+        self.assertEqual(resp.status_code, 400)
+
+        # 发送失败 → 502 且带原因
+        async def boom(umo, mc):
+            raise RuntimeError("适配器掉线")
+
+        with (
+            mock.patch.object(plugin_main, "request", FakeRequest({"id": "10001"})),
+            mock.patch.object(ctx, "send_message", side_effect=boom),
+        ):
+            resp = await pl._web_target_test()
+        self.assertEqual(resp.status_code, 502)
+        self.assertIn("适配器掉线", json.loads(resp.body).get("error", ""))
 
     # ---------- 通用推送目标行（oil_1010：混平台行、槽分调度、行级去重） ----------
 
@@ -3227,6 +3272,23 @@ class TestPushTarget(unittest.TestCase):
             t, _err = pushtarget.resolve_target(raw, group=True)
             self.assertIsNone(t, raw)
 
+    def test_t07_umo_beats_email_and_id_lookalikes(self):
+        """完整 UMO 判断优先于邮箱/飞书 ID：微信 UMO 含 @、会话 ID 可能以 oc_/ou_ 开头。"""
+        cases = (
+            "微信_猫饼:FriendMessage:o9cq807CbLtxdxXIuqcMQvmxM0OA@im.wechat",
+            "猫饼:GroupMessage:oc_7d4a4e8282b8bd317590e641b9f153fc",
+            "猫饼:FriendMessage:ou_fd57d504b35dce747cf6d51f50976b49",
+        )
+        for raw in cases:
+            t, err = pushtarget.resolve_target(raw, group=True)
+            self.assertEqual(err, "", raw)
+            self.assertEqual(t["kind"], "umo", raw)
+            self.assertEqual(t["identity"], raw)
+        # 纯邮箱仍拒绝
+        t, err = pushtarget.resolve_target("someone@example.com", group=True)
+        self.assertIsNone(t)
+        self.assertIn("完整 UMO", err)
+
 
 class TestPushRows(unittest.TestCase):
     """通用目标行解析：调度覆盖、限额、Web 载荷往返与校验。"""
@@ -3286,6 +3348,7 @@ class TestPushRows(unittest.TestCase):
             "push_private_targets": [
                 {
                     "id": "猫饼:FriendMessage:ou_x1",
+                    "name": "Albert",
                     "frequency": "weekly:4",
                     "time": "12:30",
                     "limit": None,
@@ -3301,6 +3364,7 @@ class TestPushRows(unittest.TestCase):
             [
                 {
                     "id": "https://open.feishu.cn/open-apis/bot/v2/hook/abc",
+                    "name": "",
                     "frequency": "",
                     "time": "",
                     "limit": None,
@@ -3312,13 +3376,14 @@ class TestPushRows(unittest.TestCase):
             [
                 {
                     "id": "猫饼:FriendMessage:ou_x1",
+                    "name": "Albert",
                     "frequency": "weekly:4",
                     "time": "12:30",
                     "limit": None,
                 }
             ],
         )
-        # 往返再读：行保持一致
+        # 往返再读：行（含名称）保持一致
         p = self.prefs.web_payload()
         self.assertEqual(p["push_group_targets"], b["push_group_targets"])
         self.assertEqual(p["push_private_targets"], b["push_private_targets"])
@@ -3347,7 +3412,7 @@ class TestPushRows(unittest.TestCase):
         self.assertTrue(any("时刻" in e for e in errs))
         self.assertTrue(any("限额" in e for e in errs))
         self.assertTrue(any("整数" in e for e in errs))
-        # 校验失败不落盘：默认行保持不变
+        # 校验失败不落盘：默认行保持不变（base_config 原始形状，无 name 键）
         self.assertEqual(
             self.prefs.config["basic"]["push_group_targets"],
             [{"id": "10001", "frequency": "", "time": "", "limit": None}],
@@ -3359,7 +3424,7 @@ class TestPushRows(unittest.TestCase):
         self.assertEqual((p["push_hour"], p["push_minute"]), (9, 0))
         self.assertEqual(
             p["push_group_targets"],
-            [{"id": "10001", "frequency": "", "time": "", "limit": None}],
+            [{"id": "10001", "name": "", "frequency": "", "time": "", "limit": None}],
         )
         self.assertEqual(p["push_private_targets"], [])
         # 默认行继承全局调度
@@ -3436,7 +3501,13 @@ class TestSeenSessionHandlers(unittest.IsolatedAsyncioTestCase):
         self.assertIn("已订阅", out[-1]["text"])
         rows = cfg["basic"]["push_group_targets"]
         self.assertIn(
-            {"id": "lark:GroupMessage:oc_new", "frequency": "", "time": "", "limit": None},
+            {
+                "id": "lark:GroupMessage:oc_new",
+                "name": "",
+                "frequency": "",
+                "time": "",
+                "limit": None,
+            },
             rows,
         )
         # 重复订阅提示已在

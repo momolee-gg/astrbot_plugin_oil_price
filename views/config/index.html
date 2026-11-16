@@ -118,9 +118,17 @@
   /* 目标行编辑器 */
   .trow { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
   .trow .t-id { flex: 1; min-width: 0; }
+  .trow .t-name { flex: 0 0 auto; color: var(--sub); font-size: 12px; white-space: nowrap; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
   .trow .t-freq { flex: 0 0 96px; }
   .trow .t-time { flex: 0 0 118px; }
   .trow .t-limit { flex: 0 0 110px; }
+  .trow .t-test {
+    flex: 0 0 44px; background: transparent; color: var(--btn);
+    border: 1px solid var(--line); border-radius: 7px; padding: 6px 0;
+    font-size: 12.5px; cursor: pointer;
+  }
+  .trow .t-test:hover { background: color-mix(in srgb, var(--btn) 12%, transparent); }
+  .trow .t-test:disabled { opacity: 0.5; cursor: default; }
   .trow .t-del {
     flex: 0 0 30px; background: transparent; color: var(--err);
     border: 1px solid var(--line); border-radius: 7px; padding: 6px 0;
@@ -485,6 +493,7 @@
     row.className = "trow";
     row.innerHTML =
       '<input class="t-id" type="text" autocomplete="off" spellcheck="false" placeholder="' + ph + '">' +
+      '<span class="t-name" title="会话名称（选择器/订阅自动带上，仅展示）"></span>' +
       '<select class="t-freq">' +
         '<option value="">跟随默认</option>' +
         '<option value="daily">每日</option>' +
@@ -499,11 +508,31 @@
       '</select>' +
       '<input class="t-time" type="time">' +
       '<input class="t-limit" type="number" min="0" step="1" placeholder="限额(空=默认)">' +
+      '<button type="button" class="t-test" title="向该目标立即发送一条测试消息">测试</button>' +
       '<button type="button" class="t-del" title="删除">×</button>';
     row.querySelector(".t-id").value = r.id || "";
+    row.querySelector(".t-name").textContent = r.name || "";
     row.querySelector(".t-freq").value = r.frequency || "";
     row.querySelector(".t-time").value = r.time || "";
     if (r.limit !== null && r.limit !== undefined) row.querySelector(".t-limit").value = r.limit;
+    row.querySelector(".t-test").addEventListener("click", async () => {
+      const id = row.querySelector(".t-id").value.trim();
+      if (!id) {
+        setStatus("请先填写目标串再测试", "err");
+        return;
+      }
+      const btn = row.querySelector(".t-test");
+      btn.disabled = true;
+      setStatus("测试发送中：" + id, "");
+      try {
+        await bridge.apiPost("targets/test", { id });
+        setStatus("✅ 测试消息已发送至 " + id + "（请到对应会话确认收到）", "ok");
+      } catch (e) {
+        setStatus("测试失败：" + e.message, "err");
+      } finally {
+        btn.disabled = false;
+      }
+    });
     row.querySelector(".t-del").addEventListener("click", () => row.remove());
     $(containerId).appendChild(row);
   }
@@ -511,6 +540,7 @@
   function collectPushRows(containerId) {
     return Array.from($(containerId).querySelectorAll(".trow")).map((r) => ({
       id: r.querySelector(".t-id").value.trim(),
+      name: r.querySelector(".t-name").textContent.trim(),
       frequency: r.querySelector(".t-freq").value,
       time: r.querySelector(".t-time").value,
       limit: r.querySelector(".t-limit").value === "" ? null
@@ -518,8 +548,8 @@
     })).filter((r) => r.id);
   }
 
-  const PUSH_GROUP_PH = "QQ群号 / 完整UMO / 飞书webhook或oc_";
-  const PUSH_PRIV_PH = "QQ号 / 完整UMO / ou_ / 手机号 / 邮箱";
+  const PUSH_GROUP_PH = "QQ群号 / 完整UMO / 飞书webhook";
+  const PUSH_PRIV_PH = "QQ号 / 完整UMO";
 
   function initTargetEditors() {
     $("privAdd").addEventListener("click", () => addPushRow("privRows", {}, PUSH_PRIV_PH));
@@ -588,7 +618,7 @@
         + '</b><span class="session-umo">' + escHtml(s.umo) + '</span>';
       row.addEventListener("click", () => {
         const target = s.kind === "group" ? "groupRows" : "privRows";
-        addPushRow(target, { id: s.umo, frequency: "", time: "", limit: null });
+        addPushRow(target, { id: s.umo, name: s.label || "", frequency: "", time: "", limit: null });
         $("sessionPickPanel").classList.add("hidden");
         setStatus("已添加目标行：" + (s.label || s.umo), "ok");
       });

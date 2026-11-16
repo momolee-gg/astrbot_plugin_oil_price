@@ -140,6 +140,12 @@ class OilPricePlugin(Star):
             ["GET"],
             "sessions_list",
         )
+        context.register_web_api(
+            f"/{PLUGIN_NAME}/targets/test",
+            self._web_target_test,
+            ["POST"],
+            "targets_test",
+        )
 
         self._ensure_push_loop()
 
@@ -1019,6 +1025,32 @@ class OilPricePlugin(Star):
         只读）为主、插件被动记录（含最近活跃时间）为补充，按 umo 合并去重。"""
         return json_response({"sessions": self._all_sessions()})
 
+    async def _web_target_test(self):
+        """向单个目标行立即发送一条测试消息（行内当前 id，无需先保存）。
+
+        umo 行直接调 context.send_message（异常上抛 → 返回失败原因）；
+        webhook 行直发；发送成功仅代表通道连通，不代表平台一定展示。"""
+        payload = await request.json(default={})
+        tid = str((payload or {}).get("id") or "").strip()
+        if not tid:
+            return error_response("缺少目标串", status_code=400)
+        t, err = pushtarget.resolve_target(tid, group=":GroupMessage:" in tid)
+        if not t:
+            return error_response(err or "目标无法识别", status_code=400)
+        text = (
+            "✅ 油价插件测试消息：通道连通正常。"
+            f"当前推送省份：{'、'.join(self.prefs.provinces())}"
+        )
+        try:
+            if t["kind"] == "umo":
+                mc = await asyncio.to_thread(self._make_chain, [Plain(text)])
+                await self.context.send_message(t["umo"], mc)
+            else:
+                await asyncio.to_thread(feishu.send_webhook, t["feishu"], text)
+        except Exception as e:
+            return error_response(f"发送失败：{e}", status_code=502)
+        return json_response({"ok": True, "kind": t["kind"]})
+
     def _core_sessions(self) -> list:
         """只读读取 AstrBot 核心的会话来源记录（umo_aliases 表）。
 
@@ -1432,9 +1464,11 @@ class OilPricePlugin(Star):
             return
         group = ":GroupMessage:" in umo
         key = "push_group_targets" if group else "push_private_targets"
+        sender = getattr(getattr(event, "message_obj", None), "sender", None)
+        name = str(getattr(sender, "nickname", "") or "") if sender else ""
         payload = self.prefs.web_payload()
         payload.setdefault(key, []).append(
-            {"id": umo, "frequency": "", "time": "", "limit": None}
+            {"id": umo, "name": name[:60], "frequency": "", "time": "", "limit": None}
         )
         errors = self.prefs.apply_web_update(payload)
         if errors:
