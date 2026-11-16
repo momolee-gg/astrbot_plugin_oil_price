@@ -31,13 +31,12 @@ from pathlib import Path
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event.filter import EventMessageType
 from astrbot.api.message_components import Image as BotImage
 from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star, register
 from astrbot.api.web import error_response, json_response, request
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-
-from astrbot.api.event.filter import EventMessageType
 
 from .config import Prefs
 from .modules import (

@@ -2,6 +2,16 @@
 
 本文件记录油价插件的可见变更。格式参考 Keep a Changelog。
 
+## [1.5.1] - 2026-11-16（服务器兼容性修复）
+
+### Fixed
+- **会话记录器在新版 AstrBot 上无法加载**：服务器 4.29.4 实测 `astrbot.api.event`
+  并不导出 `EventMessageType`（也无 `ALL` 常量）——改从 `astrbot.api.event.filter`
+  面导入，记录器改用 GROUP_MESSAGE|PRIVATE_MESSAGE|OTHER_MESSAGE 三类消息组合
+  覆盖全部会话（部署前已在服务器容器内实测导入）
+- 测试加载顺序：容器内运行临时目录测试套件时不再被 `/AstrBot/data/plugins` 下的
+  线上旧版插件抢先解析（该路径改为追加而非置顶）
+
 ## [1.5.0] - 2026-11-13（通用推送目标 + 飞书机器人推送）
 
 ### Added

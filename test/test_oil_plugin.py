@@ -25,9 +25,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
+# 容器内真实路径仅作「追加」而非置顶：本地/临时目录运行测试套件时，
+# 优先解析当前仓库副本，避免被 /AstrBot/data/plugins 下的旧版插件抢先
 PLUGINS_DIR = "/AstrBot/data/plugins"
 if PLUGINS_DIR not in sys.path:
-    sys.path.insert(0, PLUGINS_DIR)
+    sys.path.append(PLUGINS_DIR)
 
 TEST_ROOT = "/tmp/oil_plugin_test"
 
