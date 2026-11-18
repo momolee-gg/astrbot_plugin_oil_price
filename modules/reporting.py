@@ -19,25 +19,35 @@ def _fmt_change(ch) -> str:
     if ch is None:
         return "—"
     if ch > 0:
-        return f"↑{ch:.2f}"
+        return f"↑已涨{ch:.2f}"
     if ch < 0:
-        return f"↓{abs(ch):.2f}"
+        return f"↓已降{abs(ch):.2f}"
     return "持平"
 
 
-def fuel_line(fuel: str, entry: dict, mode: str = "last") -> str:
-    """油号价格行。mode != "last"（预测/官方/中性回退）时不展示数据源的
-    上次涨跌额箭头——该口径只属于「较上次调价」，不能冒充当次行情。"""
+def fuel_line(fuel: str, entry: dict, mode: str = "last", delta=None) -> str:
+    """油号价格行（oil_1011 措辞消歧：「降」三态不混淆）：
+    - last（已发生）：（↓已降 0.51）/（↑已涨 0.10）/（持平）
+    - forecast（下轮预测）：（预测 ↓降约 0.51），delta 取预测每升折算
+    - official（公告折算）：（公告 ↓降约 0.51）
+    - neutral：无涨跌标注（预测不可得，尾部另有中性摘要行）
+    """
     name = FUEL_NAMES.get(fuel, fuel + "号")
     price = entry["price"]
-    ch = entry.get("change")
-    if mode != "last" or ch is None:
-        return f"{name}：{price:g} 元/升"
-    if ch > 0:
-        return f"{name}：{price:g} 元/升（↑涨 {ch:.2f}）"
-    if ch < 0:
-        return f"{name}：{price:g} 元/升（↓降 {abs(ch):.2f}）"
-    return f"{name}：{price:g} 元/升（持平）"
+    if mode == "last":
+        ch = entry.get("change")
+        if ch is None:
+            return f"{name}：{price:g} 元/升"
+        if ch > 0:
+            return f"{name}：{price:g} 元/升（↑已涨 {ch:.2f}）"
+        if ch < 0:
+            return f"{name}：{price:g} 元/升（↓已降 {abs(ch):.2f}）"
+        return f"{name}：{price:g} 元/升（持平）"
+    if mode in ("forecast", "official") and delta:
+        arrow = "↑涨" if delta > 0 else "↓降"
+        tag = "预测" if mode == "forecast" else "公告"
+        return f"{name}：{price:g} 元/升（{tag} {arrow}约 {abs(delta):.2f}）"
+    return f"{name}：{price:g} 元/升"
 
 
 def _days_until(next_time: str) -> tuple:
@@ -250,12 +260,24 @@ def build_text_report(
     today = datetime.now().strftime("%m-%d")
     lines = [f"⛽ {prov}油价（{today}）"]
     rise_names, drop_names = [], []
+    # 预测/公告口径的每升折算额（预测不可用/搁浅时为空 → 价格行无标注）
+    delta_map = {}
+    if (
+        mode in ("forecast", "official")
+        and forecast
+        and forecast.get("dir")
+        in (
+            "rise",
+            "drop",
+        )
+    ):
+        delta_map = forecast.get("delta") or {}
     for fuel in FUEL_ORDER:
         if fuel not in show:
             continue
         entry = (data.get("fuels") or {}).get(fuel)
         if entry:
-            lines.append(fuel_line(fuel, entry, mode))
+            lines.append(fuel_line(fuel, entry, mode, delta_map.get(fuel)))
             if mode == "last":
                 ch = entry.get("change") or 0
                 if ch > 0:
@@ -324,6 +346,17 @@ def build_multi_text(
     show = [f for f in (fuels or FUEL_ORDER)]
     today = datetime.now().strftime("%m-%d")
     lines = [f"⛽ 今日油价速览（{today}）"]
+    delta_map = {}
+    if (
+        mode in ("forecast", "official")
+        and forecast
+        and forecast.get("dir")
+        in (
+            "rise",
+            "drop",
+        )
+    ):
+        delta_map = forecast.get("delta") or {}
     for prov, data in rows:
         parts = []
         for fuel in FUEL_ORDER:
@@ -335,6 +368,12 @@ def build_multi_text(
                     parts.append(
                         f"{fuel}#{entry['price']:g}({_fmt_change(entry.get('change'))})"
                     )
+                    continue
+                d = delta_map.get(fuel)
+                if d:
+                    arrow = "↑" if d > 0 else "↓"
+                    tag = "预测" if mode == "forecast" else "公告"
+                    parts.append(f"{fuel}#{entry['price']:g}({tag}{arrow}约{abs(d):.2f})")
                 else:
                     parts.append(f"{fuel}#{entry['price']:g}")
         lines.append(f"【{prov}】{' '.join(parts)}")

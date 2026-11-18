@@ -952,10 +952,19 @@ class TestForecast(unittest.TestCase):
 
 class TestReporting(unittest.TestCase):
     def test_fuel_line_branches(self):
-        self.assertIn("↑涨", reporting.fuel_line("92", {"price": 8.09, "change": 0.1}))
-        self.assertIn("↓降", reporting.fuel_line("92", {"price": 8.09, "change": -0.1}))
+        self.assertIn("↑已涨", reporting.fuel_line("92", {"price": 8.09, "change": 0.1}))
+        self.assertIn("↓已降", reporting.fuel_line("92", {"price": 8.09, "change": -0.1}))
         self.assertIn("持平", reporting.fuel_line("92", {"price": 8.09, "change": 0.0}))
         self.assertNotIn("（", reporting.fuel_line("92", {"price": 8.09, "change": None}))
+        # 措辞消歧（oil_1011）：预测/公告口径标「预测/公告」，last 标「已涨/已降」
+        e = {"price": 8.34, "change": -0.51}
+        self.assertIn(
+            "（预测 ↓降约 0.51）", reporting.fuel_line("92", e, "forecast", -0.51)
+        )
+        self.assertIn(
+            "（公告 ↓降约 0.51）", reporting.fuel_line("92", e, "official", -0.51)
+        )
+        self.assertNotIn("↓", reporting.fuel_line("92", e, "neutral"))
 
     def test_countdown_branches(self):
         """倒计时按「生效日前一日 = 窗口日」计算（oil_1006 修复 ShowAPI 生效日口径）。"""
@@ -1039,8 +1048,8 @@ class TestReporting(unittest.TestCase):
         self.assertNotIn("提醒", text)
         self.assertNotIn("⚡", text)
         self.assertNotIn("💡", text)  # 非持平日不出持平提示
-        self.assertIn("↑涨 0.10", text)  # 涨跌保留在价格行
-        self.assertIn("↓降 0.05", text)
+        self.assertIn("↑已涨 0.10", text)  # 涨跌保留在价格行（oil_1011 已发生措辞）
+        self.assertIn("↓已降 0.05", text)
         self.assertIn("📅", text)  # 倒计时保留
 
     def test_oil1007_query_neutral_flat_keeps_notice(self):
@@ -1073,29 +1082,37 @@ class TestReporting(unittest.TestCase):
         return d
 
     def test_oil1011_text_forecast_mode(self):
-        """>7 天有预测：中性播报——无警报标题/逐行箭头，尾部挂预计摘要。"""
-        fc = {"dir": "drop", "official": False, "per_ton": -100}
+        """>7 天有预测：中性播报——无警报标题，逐行挂「预测 ↓降约」标注，尾部预计摘要。"""
+        fc = {
+            "dir": "drop",
+            "official": False,
+            "per_ton": -100,
+            "delta": {"92": -0.08, "95": -0.08},
+        }
         text = reporting.build_text_report(
             "江苏", self._mode_data(), fuels=["92", "95"], mode="forecast", forecast=fc
         )
         self.assertNotIn("提醒", text)
-        self.assertNotIn("↓降 0.51", text)  # 逐行箭头隐藏
+        self.assertNotIn("↓已降", text)  # 不把上次涨跌当行情标注
+        self.assertIn("（预测 ↓降约 0.08）", text)
         self.assertIn("预计每吨下调约 100 元", text)
         self.assertIn("以发改委公告为准", text)
         self.assertIn("📅", text)  # 倒计时保留
 
     def test_oil1011_text_official_mode(self):
-        """窗口日公告后：官方口径——挂官方每吨摘要，无警报标题/箭头。"""
+        """窗口日公告后：官方口径——逐行挂「公告 ↓降约」标注 + 官方每吨摘要。"""
         fc = {
             "dir": "drop",
             "official": True,
             "per_ton": -645,
             "per_ton_diesel": -615,
+            "delta": {"92": -0.51},
         }
         text = reporting.build_text_report(
             "江苏", self._mode_data(), fuels=["92"], mode="official", forecast=fc
         )
         self.assertNotIn("提醒", text)
+        self.assertIn("（公告 ↓降约 0.51）", text)
         self.assertIn("官方公告：汽油每吨下调 645 元", text)
         self.assertIn("今晚 24 时起执行", text)
 
@@ -1111,11 +1128,17 @@ class TestReporting(unittest.TestCase):
         self.assertIn("下轮预测暂不可得", text)
 
     def test_oil1011_multi_forecast_mode(self):
-        """多省速览 forecast 口径：省份行无箭头，尾部预计摘要 + 倒计时。"""
-        fc = {"dir": "drop", "official": False, "per_ton": -100}
+        """多省速览 forecast 口径：省份行挂「(预测↓约)」紧凑标注，尾部预计摘要。"""
+        fc = {
+            "dir": "drop",
+            "official": False,
+            "per_ton": -100,
+            "delta": {"92": -0.08},
+        }
         rows = [("江苏", self._mode_data()), ("上海", self._mode_data())]
         text = reporting.build_multi_text(rows, fuels=["92"], mode="forecast", forecast=fc)
-        self.assertNotIn("（↓", text)
+        self.assertNotIn("(↓已降", text)  # 不把上次涨跌当行情标注
+        self.assertIn("92#8.09(预测↓约0.08)", text)
         self.assertIn("预计每吨下调约 100 元", text)
         self.assertIn("📅", text)
 
