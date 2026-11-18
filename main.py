@@ -290,18 +290,6 @@ class OilPricePlugin(Star):
         """图片消息开关：gen_enable 开且 bot 配置的 provider 里有生图端点。"""
         return bool(self.prefs.gen_enable() and self._gen_endpoints())
 
-    # ================= 价格快照（落地确认用） =================
-
-    def _price_snapshot(self, rows) -> dict:
-        return {
-            prov: {
-                k: e["price"]
-                for k, e in (data.get("fuels") or {}).items()
-                if e.get("price") is not None
-            }
-            for prov, data in rows
-        }
-
     # ================= 推送轮（oil_1001：常规推送 + 调价提醒，按省份集分组） =================
 
     def _set_key(self, provs: list) -> str:
@@ -364,57 +352,91 @@ class OilPricePlugin(Star):
                 logger.error(f"[油价插件] 省份集 {'、'.join(provs)} 推送异常: {e}")
         self._prune_push_state(set_map)
 
+    async def _resolve_mode(self, rows: list, today: str) -> tuple:
+        """涨跌额口径判定（oil_1011）：窗口日判定优先于天数判定。
+
+        - 窗口日（生效日前一天）+ 官方公告已出 → ("official", fc)
+        - 窗口日 + 公告未出 → ("forecast", fc)
+        - 上次调价 ≤7 天 → ("last", None)——数据源 change 即本轮实际涨跌，
+          警报标题「已生效」措辞成立
+        - >7 天 → ("forecast", fc)；fc 不可得 → ("neutral", None)——回退
+          中性标注上次涨跌，不冒充「今天」行情
+        fc 懒获取：仅窗口日或 >7 天才拉预测（模块自带当日缓存），
+        mode=last 路径完全不触网。
+        """
+        days, _ = reporting.days_until(
+            (rows[0][1] if rows else {}).get("next_change_time") or ""
+        )
+        if days == 0:
+            fc = await asyncio.to_thread(forecast.get_today_forecast, today)
+            if fc and fc.get("official"):
+                return "official", fc
+            return "forecast", fc
+        bct = str((rows[0][1] if rows else {}).get("before_change_time") or "")
+        try:
+            last_day = datetime.strptime(bct, "%Y%m%d").date()
+            today_d = datetime.strptime(today, "%Y-%m-%d").date()
+        except ValueError:
+            return "last", None  # 无上次调价日期：维持旧口径，不冒险切预测
+        if (today_d - last_day).days <= 7:
+            return "last", None
+        fc = await asyncio.to_thread(forecast.get_today_forecast, today)
+        if fc and fc.get("dir") in ("rise", "drop", "flat"):
+            return "forecast", fc
+        return "neutral", None
+
+    @staticmethod
+    def _is_landing_day(rows: list, today: str) -> bool:
+        """生效日判定（oil_1011）：任一省份数据的 before_change_time == 今天
+        （新价当天起执行），即落地补发日。"""
+        ymd = today.replace("-", "")
+        for _, data in rows:
+            if str(data.get("before_change_time") or "") == ymd:
+                return True
+        return False
+
     async def _push_round_one(self, provs: list, rows: list, now: datetime):
-        """单个省份集的行级推送决策：每行独立判断常规（行频率，oil_1010）/
-        落地确认（行快照有变动且该行今天未发常规）/预告（行级去重）。
-        去重规则见 F3：当天已发常规卡片则落地确认不重发；单省文字卡片自带
-        倒计时则预告不重发。状态键 = 行标识::省集。"""
+        """单个省份集的行级推送决策（oil_1011）：每行独立判断
+        常规（行频率，oil_1010）/落地补发（生效日当日、无开关总发、
+        与常规互斥：当天常规已发则跳过）/预告（行级去重、与常规完全独立）。
+        状态键 = 行标识::省集。"""
         data = await self._collect_today(provs)
         if not data:
             logger.error(f"[油价插件] 推送取消：{'、'.join(provs)} 全部查询失败")
             return
-        set_key = self._set_key(provs)
+        today = self.store.today()
         remind_n = self.prefs.change_remind_days()
+        mode_info = await self._resolve_mode(data, today)
+        landing = self._is_landing_day(data, today)
         for row in rows:
-            row_key = self._row_key(row, set_key)
             regular_sent = False
             if row["frequency"] == "daily" or (
                 row["frequency"] == "weekly" and now.weekday() == row["weekday"]
             ):
-                await self._push_report(data, [row])
+                await self._push_report(data, [row], mode_info=mode_info)
                 regular_sent = True
-            if remind_n <= 0:
-                continue
-            # 相位③ 落地确认：该行快照有变动且该行今天未发常规（首次见仅记基线）
-            changed = self._snapshot_changed(row_key, data)
-            if changed and not regular_sent:
-                logger.info("[油价插件] 调价落地：价格有变动，推送最新油价")
-                await self._push_report(data, [row])
-            # 相位①② 预告：剩余 ≤ N 天每日一条；单省常规已含倒计时的行不重发
-            if not (regular_sent and len(data) == 1):
+            # 落地补发：生效日当日（before_change_time == 今天），无开关总发；
+            # 与常规互斥——当天常规已发则跳过（两者同为最新油价播报，不重复打扰）
+            if not regular_sent and landing:
+                logger.info("[油价插件] 调价落地：生效日当日补发最新油价")
+                await self._push_report(data, [row], mode_info=mode_info)
+            # 预告：与常规完全独立（去抑制），仍受 change_remind_days 门控
+            if remind_n > 0:
                 await self._advance_remind(data, [row])
 
-    def _snapshot_changed(self, set_key: str, rows: list):
-        """按省份集对比价格快照。首次见到该集只记基线返回 None，否则返回是否有变动。"""
-        st = self._load_push_state()
-        snaps = st.setdefault("price_snaps", {})
-        cur = self._price_snapshot(rows)
-        old = snaps.get(set_key)
-        snaps[set_key] = cur
-        self._save_push_state(st)
-        return None if old is None else old != cur
-
     def _prune_push_state(self, set_map: dict):
-        """快照与预告去重状态只保留当前目标行的键（行标识::省集），
-        防目标调整/换集后无限增长。"""
+        """提醒/公告去重状态只保留当前目标行的键（行标识::省集），
+        防目标调整/换集后无限增长；并清理 v1.5.4 前遗留的 price_snaps
+        快照盒（oil_1011 起落地补发改按生效日判定，快照机制整体退役）。"""
         st = self._load_push_state()
+        dirty = "price_snaps" in st  # oil_1011：遗留快照盒整盒退役
+        st.pop("price_snaps", None)
         keep = {
             self._row_key(row, self._set_key(list(provs)))
             for provs, rows in set_map.items()
             for row in rows
         }
-        dirty = False
-        for key in ("price_snaps", "remind_done", "official_done"):
+        for key in ("remind_done", "official_done"):
             box = st.get(key)
             if not box:
                 continue
@@ -425,19 +447,13 @@ class OilPricePlugin(Star):
         if dirty:
             self._save_push_state(st)
 
-    async def _advance_remind(
-        self, rows: list, targets: list = None, force: bool = False
-    ) -> bool:
+    async def _advance_remind(self, rows: list, targets: list = None) -> bool:
         """调价预告（相位①②，F6）：距窗口剩余 1~N 天时发一条**推算口径**提醒，
         每日每目标行至多一条（状态键=行标识::省集，oil_1010）；窗口日（剩余 0 天）
         不发——当天由官方公告推送接管（oil_1008，措辞「预计/已公告」严格分型）。
         文案含每省倒计时与当前油价明细。gen_enable 开且端点可用走 AI 海报
         （单省=文字+图片、多省=仅图片），失败回退纯文字；图片能力按行判定
-        （umo 行可收图、webhook 行仅文字）。
-
-        force=True（/油价推送测试 调价 手动触发）：无视 change_remind_days 开关、
-        ≤N 天门控与当日去重，窗口日也发送（官方口径优先，build_remind_text 按
-        fc 分型）；且**不写入去重状态**（不影响自动推送节奏）。返回是否发生了推送。
+        （umo 行可收图、webhook 行仅文字）。与常规播报完全独立（oil_1011 去抑制）。
         """
         today = self.store.today()
         row = (targets or [None])[0]
@@ -446,9 +462,7 @@ class OilPricePlugin(Star):
         days_n = self.prefs.change_remind_days()
         state_key = self._row_key(row, self._set_key([p for p, _ in rows]))
         st = self._load_push_state()
-        if not force and (
-            days_n <= 0 or (st.get("remind_done") or {}).get(state_key) == today
-        ):
+        if days_n <= 0 or (st.get("remind_done") or {}).get(state_key) == today:
             return False
         remind_rows, min_days = [], None
         for prov, data in rows:
@@ -459,7 +473,7 @@ class OilPricePlugin(Star):
             remind_rows.append((prov, data))
         if min_days is None or not remind_rows:
             return False
-        if not force and not 1 <= min_days <= days_n:
+        if not 1 <= min_days <= days_n:
             # 窗口日（min_days=0）不在预告范围：官方公告推送当天接管
             return False
         fc = None
@@ -502,10 +516,9 @@ class OilPricePlugin(Star):
         except Exception as e:
             logger.error(f"[油价插件] 调价提醒出图失败，回退文字: {e}")
             await self._push_text(text, targets)
-        if not force:
-            st = self._load_push_state()
-            st.setdefault("remind_done", {})[state_key] = today
-            self._save_push_state(st)
+        st = self._load_push_state()
+        st.setdefault("remind_done", {})[state_key] = today
+        self._save_push_state(st)
         logger.info("[油价插件] 已发送调价提醒")
         return True
 
@@ -615,15 +628,21 @@ class OilPricePlugin(Star):
                     logger.error(f"[油价插件] 官方公告推送异常（{done_key}）: {e}")
         self._save_push_state(st)
 
-    async def _push_report(self, rows: list, targets: list = None):
-        """按省份集生成并推送当日油价内容（常规推送与调价落地确认共用）。
+    async def _push_report(self, rows: list, targets: list = None, mode_info=None):
+        """按省份集生成并推送当日油价内容（常规推送、落地补发与手动广播共用）。
 
+        口径（oil_1011）：mode_info 未显式传入时按 _resolve_mode 判定——
+        last（≤7 天，警报标题）/ forecast / official（窗口日）/ neutral
+        （>7 天且预测不可得，中性回退）。
         图片消息开关（gen_enable）：开且生图端点可用 → 单省=文字+图片两条，
         多省=仅图片；关或端点不可用 → 只发文字版。出图失败自动回退文字，不断播。
         图片能力按行判定（oil_1010）：umo 行可收图（适配器发送）、webhook 行仅文字；
         多省仅图片时 webhook 行改收速览文字。
         """
         today = self.store.today()
+        if mode_info is None:
+            mode_info = await self._resolve_mode(rows, today)
+        mode, fc = mode_info
         targets = targets if targets is not None else self.prefs.push_rows()
         img_rows = [r for r in targets if self._row_image_capable(r)]
         send_image = self._image_ready() and bool(img_rows)
@@ -632,7 +651,7 @@ class OilPricePlugin(Star):
         try:
             if len(rows) == 1:
                 prov, data = rows[0]
-                text = self._report_text(prov, data)
+                text = self._report_text(prov, data, mode_info=mode_info)
                 if send_image:
                     path = await self.get_or_gen_image(
                         text, f"ai_{prov}", today, provs=[prov]
@@ -642,7 +661,9 @@ class OilPricePlugin(Star):
                 else:
                     await self._push_text(text, targets)
             else:
-                text = reporting.build_multi_text(rows, self.prefs.default_fuels())
+                text = reporting.build_multi_text(
+                    rows, self.prefs.default_fuels(), mode=mode, forecast=fc
+                )
                 if send_image:
                     path = await self.get_or_gen_image(
                         text, "ai_multi", today, provs=[p for p, _ in rows]
@@ -656,12 +677,14 @@ class OilPricePlugin(Star):
         except Exception as e:
             logger.error(f"[油价插件] 出图失败，改用文字推送: {e}")
             await self._push_text(
-                self._fallback_text(rows) + "\n\n⚠️ 海报生成失败，已回退文字版",
+                self._fallback_text(rows, mode_info=mode_info)
+                + "\n\n⚠️ 海报生成失败，已回退文字版",
                 targets,
             )
 
     async def _daily_push(self):
-        """立即按当前配置执行一次常规内容推送（/油价推送测试 用，不参与去重状态）。"""
+        """立即按当前配置对全部目标执行一轮常规内容推送
+        （/油价调整 手动广播用，不参与去重状态）。"""
         if not self.prefs.app_key_ready():
             logger.warning("[油价插件] 未配置 appKey，跳过推送")
             return
@@ -729,16 +752,21 @@ class OilPricePlugin(Star):
                 logger.error(f"[油价插件] 查询 {prov} 失败: {e}")
         return rows
 
-    def _report_text(self, prov: str, data: dict, alarm: bool = True) -> str:
+    def _report_text(
+        self, prov: str, data: dict, alarm: bool = True, mode_info=None
+    ) -> str:
+        mode, fc = mode_info or ("last", None)
         return reporting.build_text_report(
             prov,
             data,
             trend_series=self.store.trend_series,
             fuels=self.prefs.default_fuels(),
             alarm=alarm,
+            mode=mode,
+            forecast=fc,
         )
 
-    def _fallback_text(self, rows: list, alarm: bool = True) -> str:
+    def _fallback_text(self, rows: list, alarm: bool = True, mode_info=None) -> str:
         """只发文字时的文案：单省=完整多行报告，多省=紧凑速览。
 
         出图失败与图片关闭两条路径共用；此前单省出图失败误用多省速览，
@@ -747,8 +775,11 @@ class OilPricePlugin(Star):
         """
         if len(rows) == 1:
             prov, data = rows[0]
-            return self._report_text(prov, data, alarm=alarm)
-        return reporting.build_multi_text(rows, self.prefs.default_fuels())
+            return self._report_text(prov, data, alarm=alarm, mode_info=mode_info)
+        mode, fc = mode_info or ("last", None)
+        return reporting.build_multi_text(
+            rows, self.prefs.default_fuels(), mode=mode, forecast=fc
+        )
 
     def _gen_endpoints(self) -> list:
         """从 bot 已配置的模型提供者提取生图端点，正在使用的排最前。"""
@@ -1203,10 +1234,14 @@ class OilPricePlugin(Star):
             yield event.plain_result("油价查询失败喵，请稍后再试")
             return
         self._record_query(event, provs)
+        mode_info = await self._resolve_mode(rows, self.store.today())
         if prov_arg:
-            text = self._report_text(prov_arg, rows[0][1], alarm=False)
+            text = self._report_text(prov_arg, rows[0][1], alarm=False, mode_info=mode_info)
         else:
-            text = reporting.build_multi_text(rows, self.prefs.default_fuels())
+            mode, fc = mode_info
+            text = reporting.build_multi_text(
+                rows, self.prefs.default_fuels(), mode=mode, forecast=fc
+            )
         yield event.plain_result(text + extra)
 
     @filter.command("今日油价")
@@ -1227,21 +1262,27 @@ class OilPricePlugin(Star):
             return
         self._record_query(event, provs)
         today = self.store.today()
+        mode_info = await self._resolve_mode(rows, today)
         if not self._image_ready():
             hint = (
                 "（图片消息未开启或未配置生图端点，已发文字版。"
                 "请到 WebUI「油价设置」开启图片消息并确认 bot 已配置模型）"
             )
-            yield event.plain_result(self._fallback_text(rows, alarm=False) + hint)
+            yield event.plain_result(
+                self._fallback_text(rows, alarm=False, mode_info=mode_info) + hint
+            )
             return
         if len(provs) == 1 and rows:
             prov, data = rows[0]
-            # 查询走中性播报（oil_1007）：不带警报标题，文案哈希与推送不同，
-            # 不会命中落地确认推送生成的同一张海报
-            poster_text = self._report_text(prov, data, alarm=False)
+            # 查询走中性播报（oil_1007）：文案哈希与推送不同，
+            # 不会命中推送生成的同一张海报；口径与推送一致（oil_1011）
+            poster_text = self._report_text(prov, data, alarm=False, mode_info=mode_info)
             base_name, poster_provs = f"ai_{prov}", [prov]
         else:
-            poster_text = reporting.build_multi_text(rows, self.prefs.default_fuels())
+            mode, fc = mode_info
+            poster_text = reporting.build_multi_text(
+                rows, self.prefs.default_fuels(), mode=mode, forecast=fc
+            )
             base_name, poster_provs = "ai_multi", [p for p, _ in rows]
         # 当日缓存命中（oil_1002）：跳过等待提示语直接发图
         if self.prefs.gen_cache():
@@ -1486,43 +1527,42 @@ class OilPricePlugin(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.command("油价推送测试")
-    async def push_test_cmd(self, event: AstrMessageEvent, mode: str = ""):
-        """管理员：立即向全部推送目标发一次测试推送（无参=每日播报；/油价推送测试 调价=调价提醒）"""
+    async def push_test_cmd(self, event: AstrMessageEvent):
+        """管理员：插件自检——回复通道连通与配置摘要，不向推送目标广播"""
+        hour, minute = self.prefs.push_time()
+        rows = self.prefs.push_rows()
+        yield event.plain_result(
+            "✅ 油价插件测试消息：通道连通正常。\n"
+            f"推送省份：{'、'.join(self.prefs.provinces())} · "
+            f"默认油号 {'/'.join(self.prefs.default_fuels())}号\n"
+            f"推送时间 {hour:02d}:{minute:02d} · 推送目标 {len(rows)} 个"
+        )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @filter.command("油价调整")
+    async def price_adjust_push_cmd(self, event: AstrMessageEvent):
+        """管理员：立即向全部推送目标广播一轮常规油价播报（不影响自动推送节奏）"""
         key_hint = self._key_hint()
         if key_hint:
             yield event.plain_result(key_hint)
             return
-        if (mode or "").strip() in ("调价", "提醒", "adjust"):
-            yield event.plain_result(await self._manual_adjust_push())
-            return
-        await self._daily_push()
-        rows = self.prefs.push_rows()
-        yield event.plain_result(
-            "✅ 测试推送已执行："
-            + (
-                "、".join(r["identity"] for r in rows)
-                if rows
-                else "未配置推送目标（请在设置页添加目标行）"
-            )
-        )
-
-    async def _manual_adjust_push(self) -> str:
-        """手动触发一轮调价提醒（/油价推送测试 调价）：无视去重与 ≤N 天门控，
-        窗口日也发送，且不写去重状态（不影响自动推送节奏）。返回指令回执文本。"""
         rows = self.prefs.push_rows()
         if not rows:
-            return "未配置推送目标（请在设置页添加目标行，或在本会话发 /油价订阅）"
-        sent_any = False
-        set_map = self._target_province_sets(rows)
-        for provs, set_rows in set_map.items():
+            yield event.plain_result(
+                "未配置推送目标（请在设置页添加目标行，或在本会话发 /油价订阅）"
+            )
+            return
+        sent = 0
+        for provs, set_rows in self._target_province_sets(rows).items():
             data = await self._collect_today(list(provs))
             if not data:
                 continue
-            if await self._advance_remind(data, set_rows, force=True):
-                sent_any = True
-        if sent_any:
-            return (
-                f"✅ 调价提醒已推送至 {len(rows)} 个目标"
-                "（内容含下次调价窗口倒计时与预测/公告口径）"
+            mode_info = await self._resolve_mode(data, self.store.today())
+            await self._push_report(data, set_rows, mode_info=mode_info)
+            sent += len(set_rows)
+        if sent:
+            yield event.plain_result(
+                f"✅ 常规播报已推送至 {sent} 个目标（按当日涨跌额口径渲染）"
             )
-        return "未能推送：数据源暂无下次调价日期，或全部省份查询失败"
+        else:
+            yield event.plain_result("未能推送：全部省份查询失败")

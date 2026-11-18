@@ -25,11 +25,13 @@ def _fmt_change(ch) -> str:
     return "持平"
 
 
-def fuel_line(fuel: str, entry: dict) -> str:
+def fuel_line(fuel: str, entry: dict, mode: str = "last") -> str:
+    """油号价格行。mode != "last"（预测/官方/中性回退）时不展示数据源的
+    上次涨跌额箭头——该口径只属于「较上次调价」，不能冒充当次行情。"""
     name = FUEL_NAMES.get(fuel, fuel + "号")
     price = entry["price"]
     ch = entry.get("change")
-    if ch is None:
+    if mode != "last" or ch is None:
         return f"{name}：{price:g} 元/升"
     if ch > 0:
         return f"{name}：{price:g} 元/升（↑涨 {ch:.2f}）"
@@ -205,6 +207,26 @@ def build_remind_text(rows: list, fuels: list = None, forecast: dict = None) -> 
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
+def _last_change_notice(data: dict, show: list) -> str:
+    """中性回退行（oil_1011）：预测不可得时如实标注上次调价——措辞锚定
+    「上次」，绝不冒充「今天」行情；无涨跌数据返回空串。"""
+    ch = None
+    for fuel in FUEL_ORDER:
+        if fuel in show:
+            e = (data.get("fuels") or {}).get(fuel)
+            if e and e.get("change") is not None:
+                ch = e["change"]
+                break
+    if ch is None:
+        return ""
+    arrow = "↑涨" if ch > 0 else ("↓降" if ch < 0 else "持平")
+    bct = str(data.get("before_change_time") or "")
+    day = f"（{bct[4:6]}-{bct[6:8]}）" if len(bct) >= 8 else ""
+    return (
+        f"💡 上次调价{day}{arrow} {abs(ch):.2f} 元/升，下轮预测暂不可得（以发改委公告为准）"
+    )
+
+
 def build_text_report(
     prov: str,
     data: dict,
@@ -212,13 +234,17 @@ def build_text_report(
     trend_days: int = 14,
     fuels: list = None,
     alarm: bool = True,
+    mode: str = "last",
+    forecast: dict = None,
 ) -> str:
     """单省完整文字报告。fuels: 只展示的油号列表，None 表示全部。
 
-    alarm=True（推送路径）涨跌日套「油价上涨/下调提醒」警报标题与 ⚡ 提示；
-    alarm=False（用户主动查询，oil_1007）中性播报——不加警报标题与提示，
-    涨跌仍体现在每行 ↑涨/↓降 标注里。查询与推送文案不同，当日生图缓存
-    也因此天然分开，不再返回与落地确认推送逐字节相同的海报。
+    口径分型（oil_1011）：mode="last"（默认，调价 ≤7 天）警报标题 +
+    逐行涨跌标注照旧；mode="forecast"/"official"（窗口日或 >7 天）中性
+    播报——无警报标题、无逐行箭头，尾部附预测/官方公告摘要行；
+    mode="neutral"（>7 天且预测不可得）回退中性标注上次调价。
+    alarm=False（用户主动查询，oil_1007）在 last 口径下去掉警报标题；
+    查询与推送文案不同，当日生图缓存也因此天然分开。
     """
     show = [f for f in (fuels or FUEL_ORDER)]
     today = datetime.now().strftime("%m-%d")
@@ -229,12 +255,13 @@ def build_text_report(
             continue
         entry = (data.get("fuels") or {}).get(fuel)
         if entry:
-            lines.append(fuel_line(fuel, entry))
-            ch = entry.get("change") or 0
-            if ch > 0:
-                rise_names.append(FUEL_NAMES.get(fuel, fuel))
-            elif ch < 0:
-                drop_names.append(FUEL_NAMES.get(fuel, fuel))
+            lines.append(fuel_line(fuel, entry, mode))
+            if mode == "last":
+                ch = entry.get("change") or 0
+                if ch > 0:
+                    rise_names.append(FUEL_NAMES.get(fuel, fuel))
+                elif ch < 0:
+                    drop_names.append(FUEL_NAMES.get(fuel, fuel))
     text = "\n".join(lines)
 
     if trend_series:
@@ -253,7 +280,15 @@ def build_text_report(
                 text += f"\n\n📈 近期走势（{len(series)} 日）：{'；'.join(parts)}"
 
     next_time = data.get("next_change_time") or ""
-    if rise_names and alarm:
+    if mode != "last":
+        # 口径外：不套警报标题，尾部挂预测/官方/中性摘要行
+        if mode in ("forecast", "official") and forecast:
+            notice = _forecast_notice(forecast)
+        else:
+            notice = _last_change_notice(data, show)
+        if notice:
+            text += f"\n\n{notice}"
+    elif rise_names and alarm:
         hint = rise_hint_text(next_time)
         text = (
             "🚨🚨 油价上涨提醒 🚨🚨\n"
@@ -278,8 +313,14 @@ def build_text_report(
     return text
 
 
-def build_multi_text(rows: list, fuels: list = None) -> str:
-    """多省紧凑文字报告。rows: [(prov, data), ...]"""
+def build_multi_text(
+    rows: list, fuels: list = None, mode: str = "last", forecast: dict = None
+) -> str:
+    """多省紧凑文字报告。rows: [(prov, data), ...]
+
+    mode 语义同 build_text_report（oil_1011）：非 last 口径省份行不显示
+    上次涨跌箭头，尾部改挂预测/官方/中性摘要行。
+    """
     show = [f for f in (fuels or FUEL_ORDER)]
     today = datetime.now().strftime("%m-%d")
     lines = [f"⛽ 今日油价速览（{today}）"]
@@ -290,11 +331,20 @@ def build_multi_text(rows: list, fuels: list = None) -> str:
                 continue
             entry = (data.get("fuels") or {}).get(fuel)
             if entry:
-                parts.append(
-                    f"{fuel}#{entry['price']:g}({_fmt_change(entry.get('change'))})"
-                )
+                if mode == "last":
+                    parts.append(
+                        f"{fuel}#{entry['price']:g}({_fmt_change(entry.get('change'))})"
+                    )
+                else:
+                    parts.append(f"{fuel}#{entry['price']:g}")
         lines.append(f"【{prov}】{' '.join(parts)}")
     text = "\n".join(lines)
+    if mode in ("forecast", "official") and forecast:
+        text += f"\n\n{_forecast_notice(forecast)}"
+    elif mode == "neutral":
+        notice = _last_change_notice((rows[0][1] if rows else {}), show)
+        if notice:
+            text += f"\n\n{notice}"
     countdown = adjust_countdown_text(
         (rows[0][1] if rows else {}).get("next_change_time") or ""
     )
