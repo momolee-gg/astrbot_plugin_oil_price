@@ -1170,7 +1170,9 @@ class TestReporting(unittest.TestCase):
         )
         self.assertIn("江苏 92号汽油：", multi)
         self.assertIn("上海 92号汽油：", multi)
-        self.assertGreaterEqual(multi.count("调价窗口"), 2)
+        # oil_1011：多省仅首省带倒计时行（各省窗口相同，省略重复）
+        self.assertEqual(multi.count("调价窗口"), 1)
+        self.assertEqual(multi.count("⛽ "), 1)
 
         no_window = fake_price_data(8.09)
         no_window["next_change_time"] = ""

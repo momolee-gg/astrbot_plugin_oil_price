@@ -37,17 +37,17 @@ def fuel_line(fuel: str, entry: dict, mode: str = "last", delta=None) -> str:
     if mode == "last":
         ch = entry.get("change")
         if ch is None:
-            return f"{name}：{price:g} 元/升"
+            return f"{name}：{price:.2f} 元/升"
         if ch > 0:
-            return f"{name}：{price:g} 元/升（↑已涨 {ch:.2f}）"
+            return f"{name}：{price:.2f} 元/升（↑已涨 {ch:.2f}）"
         if ch < 0:
-            return f"{name}：{price:g} 元/升（↓已降 {abs(ch):.2f}）"
-        return f"{name}：{price:g} 元/升（持平）"
+            return f"{name}：{price:.2f} 元/升（↓已降 {abs(ch):.2f}）"
+        return f"{name}：{price:.2f} 元/升（持平）"
     if mode in ("forecast", "official") and delta:
         arrow = "↑涨" if delta > 0 else "↓降"
         tag = "预测" if mode == "forecast" else "公告"
-        return f"{name}：{price:g} 元/升（{tag} {arrow}约 {abs(delta):.2f}）"
-    return f"{name}：{price:g} 元/升"
+        return f"{name}：{price:.2f} 元/升（{tag} {arrow}约 {abs(delta):.2f}）"
+    return f"{name}：{price:.2f} 元/升"
 
 
 def _days_until(next_time: str) -> tuple:
@@ -147,11 +147,11 @@ def _remind_fuel_line(
     name = FUEL_NAMES.get(fuel, fuel + "号")
     price = entry["price"]
     if not delta:
-        return f"{name}：现价 {price:g} 元/升"
+        return f"{name}：现价 {price:.2f} 元/升"
     arrow = "↑涨" if delta > 0 else "↓降"
     if official:
-        return f"{name}：现价 {price:g} 元/升（{arrow}约 {abs(delta):.2f}）"
-    return f"{name}：现价 {price:g} 元/升（预计 {arrow}约 {abs(delta):.2f}）"
+        return f"{name}：现价 {price:.2f} 元/升（{arrow}约 {abs(delta):.2f}）"
+    return f"{name}：现价 {price:.2f} 元/升（预计 {arrow}约 {abs(delta):.2f}）"
 
 
 def _forecast_notice(forecast: dict) -> str:
@@ -184,6 +184,8 @@ def build_remind_text(rows: list, fuels: list = None, forecast: dict = None) -> 
     价格行带省份前缀，海报上不致混淆归属。
     rows: [(prov, data), ...]；forecast: forecast.estimate()/官方公告结构（可
     None，None 时只报现价、方向中性，不带任何涨跌标注）。
+    多省时仅**首省**带倒计时行（oil_1011：各省窗口相同，省略重复），
+    价格行仍全部带省份前缀。
     无任何倒计时行时返回空串（调用方不发）。
     """
     show = [f for f in (fuels or FUEL_ORDER)]
@@ -195,13 +197,18 @@ def build_remind_text(rows: list, fuels: list = None, forecast: dict = None) -> 
     if direction not in ("rise", "drop"):
         delta = {}
     multi = len(rows) > 1
+    countdown_done = False
     for prov, data in rows:
         line = adjust_countdown_text(
             data.get("next_change_time") or "", direction, official
         )
-        if not line:
-            continue
-        lines.append(f"⛽ {prov}：{line}")
+        if not countdown_done:
+            if not line:
+                # 首个带倒计时的省份之前：无窗口省份整省跳过（原行为）
+                continue
+            lines.append(f"⛽ {prov}：{line}")
+            countdown_done = True
+        # 倒计时行已出现：后续省份省略重复倒计时，仅列价格行
         for fuel in FUEL_ORDER:
             if fuel not in show:
                 continue
@@ -297,7 +304,7 @@ def build_text_report(
                     if fuel in (x[1].get("fuels") or {})
                 ]
                 if len(vals) >= 2:
-                    parts.append(f"{fuel}号 {vals[0]:g}→{vals[-1]:g}")
+                    parts.append(f"{fuel}号 {vals[0]:.2f}→{vals[-1]:.2f}")
             if parts:
                 text += f"\n\n📈 近期走势（{len(series)} 日）：{'；'.join(parts)}"
 
@@ -366,16 +373,16 @@ def build_multi_text(
             if entry:
                 if mode == "last":
                     parts.append(
-                        f"{fuel}#{entry['price']:g}({_fmt_change(entry.get('change'))})"
+                        f"{fuel}#{entry['price']:.2f}({_fmt_change(entry.get('change'))})"
                     )
                     continue
                 d = delta_map.get(fuel)
                 if d:
                     arrow = "↑" if d > 0 else "↓"
                     tag = "预测" if mode == "forecast" else "公告"
-                    parts.append(f"{fuel}#{entry['price']:g}({tag}{arrow}约{abs(d):.2f})")
+                    parts.append(f"{fuel}#{entry['price']:.2f}({tag}{arrow}约{abs(d):.2f})")
                 else:
-                    parts.append(f"{fuel}#{entry['price']:g}")
+                    parts.append(f"{fuel}#{entry['price']:.2f}")
         lines.append(f"【{prov}】{' '.join(parts)}")
     text = "\n".join(lines)
     if mode in ("forecast", "official") and forecast:
