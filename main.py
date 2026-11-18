@@ -357,11 +357,11 @@ class OilPricePlugin(Star):
 
         - 窗口日（生效日前一天）+ 官方公告已出 → ("official", fc)
         - 窗口日 + 公告未出 → ("forecast", fc)
-        - 上次调价 ≤7 天 → ("last", None)——数据源 change 即本轮实际涨跌，
+        - 上次调价 ≤2 天 → ("last", None)——数据源 change 即本轮实际涨跌，
           警报标题「已生效」措辞成立
-        - >7 天 → ("forecast", fc)；fc 不可得 → ("neutral", None)——回退
+        - >2 天 → ("forecast", fc)；fc 不可得 → ("neutral", None)——回退
           中性标注上次涨跌，不冒充「今天」行情
-        fc 懒获取：仅窗口日或 >7 天才拉预测（模块自带当日缓存），
+        fc 懒获取：仅窗口日或 >2 天才拉预测（模块自带当日缓存），
         mode=last 路径完全不触网。
         """
         days, _ = reporting.days_until(
@@ -378,7 +378,7 @@ class OilPricePlugin(Star):
             today_d = datetime.strptime(today, "%Y-%m-%d").date()
         except ValueError:
             return "last", None  # 无上次调价日期：维持旧口径，不冒险切预测
-        if (today_d - last_day).days <= 7:
+        if (today_d - last_day).days <= 2:
             return "last", None
         fc = await asyncio.to_thread(forecast.get_today_forecast, today)
         if fc and fc.get("dir") in ("rise", "drop", "flat"):
@@ -632,8 +632,8 @@ class OilPricePlugin(Star):
         """按省份集生成并推送当日油价内容（常规推送、落地补发与手动广播共用）。
 
         口径（oil_1011）：mode_info 未显式传入时按 _resolve_mode 判定——
-        last（≤7 天，警报标题）/ forecast / official（窗口日）/ neutral
-        （>7 天且预测不可得，中性回退）。
+        last（≤2 天，警报标题）/ forecast / official（窗口日）/ neutral
+        （>2 天且预测不可得，中性回退）。
         图片消息开关（gen_enable）：开且生图端点可用 → 单省=文字+图片两条，
         多省=仅图片；关或端点不可用 → 只发文字版。出图失败自动回退文字，不断播。
         图片能力按行判定（oil_1010）：umo 行可收图（适配器发送）、webhook 行仅文字；

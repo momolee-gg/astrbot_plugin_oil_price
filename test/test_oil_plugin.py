@@ -1082,7 +1082,7 @@ class TestReporting(unittest.TestCase):
         return d
 
     def test_oil1011_text_forecast_mode(self):
-        """>7 天有预测：中性播报——无警报标题，逐行挂「预测 ↓降约」标注，尾部预计摘要。"""
+        """last 窗口外（>2 天）有预测：中性播报——无警报标题，逐行挂「预测 ↓降约」标注，尾部预计摘要。"""
         fc = {
             "dir": "drop",
             "official": False,
@@ -1117,7 +1117,7 @@ class TestReporting(unittest.TestCase):
         self.assertIn("今晚 24 时起执行", text)
 
     def test_oil1011_text_neutral_mode(self):
-        """>7 天预测不可得：中性回退——标注上次调价，不用「今天」措辞。"""
+        """last 窗口外（>2 天）预测不可得：中性回退——标注上次调价，不用「今天」措辞。"""
         text = reporting.build_text_report(
             "江苏", self._mode_data(before_days_ago=30), fuels=["92"], mode="neutral"
         )
@@ -3160,7 +3160,7 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
     # ---------- oil_1011 涨跌额口径解析 ----------
 
     async def test_oil1011_resolve_mode_last_lazy(self):
-        """≤7 天：last 口径且不触发预测拉取（懒获取，不触网）。"""
+        """≤2 天：last 口径且不触发预测拉取（懒获取，不触网）。"""
         pl, _ctx, _cfg = make_plugin(name="oil1011a")
 
         def boom(today):
@@ -3212,8 +3212,8 @@ class AsyncPluginTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mode2, "official")
         self.assertTrue(fc2["official"])
 
-    async def test_oil1011_resolve_mode_over7_and_neutral(self):
-        """>7 天：有预测→forecast；预测不可得→neutral 回退。"""
+    async def test_oil1011_resolve_mode_over2_and_neutral(self):
+        """>2 天：有预测→forecast；预测不可得→neutral 回退。"""
         pl, _ctx, _cfg = make_plugin(name="oil1011c")
         est = {"dir": "drop", "official": False, "per_ton": -100}
         with mock.patch.object(
