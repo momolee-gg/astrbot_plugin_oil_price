@@ -1,14 +1,14 @@
 {
   "schemaVersion": "mimosa-hook-status/v1",
-  "recordedAt": "2026-11-13T09:56:20.839Z",
+  "recordedAt": "2026-11-16T07:52:57.277Z",
   "sessionId": "sess_f2052f8c-4c0d-49d6-99b6-0ac36147f1f3",
   "event": "PostToolUse",
-  "toolName": "Edit",
-  "file": "main.py",
+  "toolName": "Write",
+  "file": "C:/Users/gxu/AppData/Local/Temp/oil_ssh_askpass.sh",
   "outcome": "clear",
   "coverage": "complete",
   "findingCount": 0,
-  "durationMs": 34,
+  "durationMs": 41,
   "hostState": "hook_complete",
   "reportHint": ".mimosa/reports/"
 }

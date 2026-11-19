@@ -1,0 +1,668 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20261118T092148675Z-20624-6e75b92995b0",
+  "run_status": "inconclusive",
+  "errors": [
+    {
+      "stage": "scan",
+      "target": "modules/charts.py",
+      "reason": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "modules/reporting.py",
+      "reason": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "main.py",
+      "reason": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "modules/forecast.py",
+      "reason": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT"
+    },
+    {
+      "stage": "scan",
+      "target": "test/test_oil_plugin.py",
+      "reason": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT"
+    }
+  ],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "partial",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": true,
+      "captured_files": 29,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 5
+    },
+    "change_tracking": {
+      "touched_observed": 5,
+      "touched_retained": 5,
+      "truncated": false,
+      "bash_mutation": true,
+      "bash_discovered": 5,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 5,
+      "selected_files": 5,
+      "limit": 20,
+      "truncated": false
+    },
+    "scanning": {
+      "required_files": 5,
+      "scanned_files": 0,
+      "skipped_files": 0,
+      "failed_files": 5,
+      "project_checks_required": 0,
+      "project_checks_completed": 0
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {
+      "scanner_failed": 5,
+      "project_check_failed": 5
+    },
+    "reasons": [
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "modules/charts.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "modules/reporting.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "main.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "modules/forecast.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "test/test_oil_plugin.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "modules/charts.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "modules/reporting.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "main.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "modules/forecast.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "test/test_oil_plugin.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affects_completion": true
+      }
+    ],
+    "reasons_truncated": false
+  },
+  "generated_at": "2026-11-18T09:21:48.675Z",
+  "session_id": "sess_71129778-dfc0-47c2-9ea8-a24bf4638545",
+  "target": ".",
+  "revision": "e1e040a269d81edd3a7cbf48d19809b3d72ace0c",
+  "rules_version": "unavailable",
+  "diff_hash": "fb497497940271ecdd07d7774c34ecc2826e9f5b2a91790a3bc9678ae51fcb9b",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 5,
+    "changed_files": [
+      {
+        "file": "main.py",
+        "ranges": [
+          {
+            "start": 355,
+            "end": 397
+          },
+          {
+            "start": 399,
+            "end": 402
+          },
+          {
+            "start": 407,
+            "end": 407
+          },
+          {
+            "start": 409,
+            "end": 410
+          },
+          {
+            "start": 416,
+            "end": 416
+          },
+          {
+            "start": 418,
+            "end": 424
+          },
+          {
+            "start": 428,
+            "end": 430
+          },
+          {
+            "start": 432,
+            "end": 433
+          },
+          {
+            "start": 439,
+            "end": 439
+          },
+          {
+            "start": 450,
+            "end": 450
+          },
+          {
+            "start": 456,
+            "end": 456
+          },
+          {
+            "start": 465,
+            "end": 465
+          },
+          {
+            "start": 476,
+            "end": 476
+          },
+          {
+            "start": 519,
+            "end": 521
+          },
+          {
+            "start": 631,
+            "end": 632
+          },
+          {
+            "start": 634,
+            "end": 636
+          },
+          {
+            "start": 643,
+            "end": 645
+          },
+          {
+            "start": 654,
+            "end": 654
+          },
+          {
+            "start": 664,
+            "end": 666
+          },
+          {
+            "start": 680,
+            "end": 681
+          },
+          {
+            "start": 686,
+            "end": 687
+          },
+          {
+            "start": 755,
+            "end": 758
+          },
+          {
+            "start": 765,
+            "end": 766
+          },
+          {
+            "start": 769,
+            "end": 769
+          },
+          {
+            "start": 778,
+            "end": 782
+          },
+          {
+            "start": 1237,
+            "end": 1237
+          },
+          {
+            "start": 1239,
+            "end": 1239
+          },
+          {
+            "start": 1241,
+            "end": 1244
+          },
+          {
+            "start": 1265,
+            "end": 1265
+          },
+          {
+            "start": 1271,
+            "end": 1273
+          },
+          {
+            "start": 1277,
+            "end": 1279
+          },
+          {
+            "start": 1282,
+            "end": 1285
+          },
+          {
+            "start": 1530,
+            "end": 1532
+          },
+          {
+            "start": 1535,
+            "end": 1538
+          },
+          {
+            "start": 1541,
+            "end": 1548
+          },
+          {
+            "start": 1551,
+            "end": 1556
+          },
+          {
+            "start": 1560,
+            "end": 1565
+          },
+          {
+            "start": 1567,
+            "end": 1568
+          }
+        ],
+        "before_hash": "496142d15fe4ce6a5e1e8f8061ba9b9cc684c43b469d8d29d66f65fded0956ff",
+        "after_hash": "3ba97876200c12b9c483555d6a26db04cc880344fa3688b2c32d6cfdd27faf89"
+      },
+      {
+        "file": "modules/charts.py",
+        "ranges": [
+          {
+            "start": 1,
+            "end": 1
+          },
+          {
+            "start": 3,
+            "end": 4
+          },
+          {
+            "start": 11,
+            "end": 11
+          },
+          {
+            "start": 31,
+            "end": 31
+          },
+          {
+            "start": 54,
+            "end": 54
+          }
+        ],
+        "before_hash": "4c66a65b33007cd7e83f40d8b75604d54e7f46970d1e9ab0bb291afe99df8f85",
+        "after_hash": "954a9206de15012e5c9ed63ed98046877a619bcbb38239ec5a573b8c67c8c6e0"
+      },
+      {
+        "file": "modules/forecast.py",
+        "ranges": [
+          {
+            "start": 69,
+            "end": 69
+          }
+        ],
+        "before_hash": "83eaf5701d14fd9c6087962239f7c0d7bb488c23d14afb839b22cf426028a794",
+        "after_hash": "9fd83c482318d343c7346ed68ccef2c451017c047a82bfa502d70b7d52ae059a"
+      },
+      {
+        "file": "modules/reporting.py",
+        "ranges": [
+          {
+            "start": 28,
+            "end": 30
+          },
+          {
+            "start": 34,
+            "end": 34
+          },
+          {
+            "start": 210,
+            "end": 229
+          },
+          {
+            "start": 237,
+            "end": 238
+          },
+          {
+            "start": 242,
+            "end": 247
+          },
+          {
+            "start": 258,
+            "end": 264
+          },
+          {
+            "start": 283,
+            "end": 291
+          },
+          {
+            "start": 316,
+            "end": 323
+          },
+          {
+            "start": 334,
+            "end": 339
+          },
+          {
+            "start": 342,
+            "end": 347
+          }
+        ],
+        "before_hash": "52ee96f8463d13c3c255d44d939af75b96e78e6b2c7f38cd59859fb3106d22c8",
+        "after_hash": "98e08b303aa22fb9d8d6ac51c375c145bc119bb0df92c7b3e98a21d3d0cb725c"
+      },
+      {
+        "file": "test/test_oil_plugin.py",
+        "ranges": [
+          {
+            "start": 141,
+            "end": 142
+          },
+          {
+            "start": 150,
+            "end": 152
+          },
+          {
+            "start": 183,
+            "end": 183
+          },
+          {
+            "start": 188,
+            "end": 190
+          },
+          {
+            "start": 769,
+            "end": 769
+          },
+          {
+            "start": 771,
+            "end": 771
+          },
+          {
+            "start": 773,
+            "end": 774
+          },
+          {
+            "start": 1062,
+            "end": 1121
+          },
+          {
+            "start": 2205,
+            "end": 2206
+          },
+          {
+            "start": 2209,
+            "end": 2210
+          },
+          {
+            "start": 2250,
+            "end": 2250
+          },
+          {
+            "start": 2354,
+            "end": 2355
+          },
+          {
+            "start": 2357,
+            "end": 2357
+          },
+          {
+            "start": 2359,
+            "end": 2372
+          },
+          {
+            "start": 2376,
+            "end": 2377
+          },
+          {
+            "start": 2497,
+            "end": 2498
+          },
+          {
+            "start": 2503,
+            "end": 2503
+          },
+          {
+            "start": 2506,
+            "end": 2507
+          },
+          {
+            "start": 2509,
+            "end": 2510
+          },
+          {
+            "start": 2512,
+            "end": 2512
+          },
+          {
+            "start": 2514,
+            "end": 2516
+          },
+          {
+            "start": 2519,
+            "end": 2536
+          },
+          {
+            "start": 2630,
+            "end": 2631
+          },
+          {
+            "start": 2634,
+            "end": 2634
+          },
+          {
+            "start": 2646,
+            "end": 2646
+          },
+          {
+            "start": 2938,
+            "end": 2939
+          },
+          {
+            "start": 2966,
+            "end": 2966
+          },
+          {
+            "start": 2969,
+            "end": 2970
+          },
+          {
+            "start": 2972,
+            "end": 2972
+          },
+          {
+            "start": 3000,
+            "end": 3001
+          },
+          {
+            "start": 3010,
+            "end": 3010
+          },
+          {
+            "start": 3013,
+            "end": 3016
+          },
+          {
+            "start": 3032,
+            "end": 3033
+          },
+          {
+            "start": 3038,
+            "end": 3038
+          },
+          {
+            "start": 3055,
+            "end": 3055
+          },
+          {
+            "start": 3059,
+            "end": 3062
+          },
+          {
+            "start": 3065,
+            "end": 3065
+          },
+          {
+            "start": 3069,
+            "end": 3069
+          },
+          {
+            "start": 3075,
+            "end": 3076
+          },
+          {
+            "start": 3085,
+            "end": 3088
+          },
+          {
+            "start": 3135,
+            "end": 3240
+          }
+        ],
+        "before_hash": "1b23c958d1fdeb390d2f9078ac5691a5d757ff71a8e5292e52500a1f45083a3b",
+        "after_hash": "2e1a44fc7c0f8be0c2f5d71ee6f439adb861cca47a24f8e48edad54267b1e497"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-11-18T09:21:45.531Z",
+    "completed_at": "2026-11-18T09:21:48.675Z",
+    "duration_ms": 3144,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "partial/INCONCLUSIVE",
+    "latencyMs": 3144,
+    "peakMemoryBytes": 101793792,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 0,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [
+    {
+      "finding_id": "mimosa-431344475fe6b86d236e85d2",
+      "file": "modules/reporting.py",
+      "line": 100,
+      "rule_id": "security",
+      "severity": "high",
+      "category": "弱随机数",
+      "status": "candidate",
+      "decision": "advisory",
+      "at": "2026-11-18T08:53:09.357Z",
+      "evidence": {
+        "kind": "source",
+        "boundary": "candidate",
+        "producer": "deterministic",
+        "source": "semgrep",
+        "evidence_hash": "f934a873fc4721005d2acb047ff5662abf7e974c2396e6a7f3fd01eedf7008a9",
+        "runtime_oracle": false
+      }
+    },
+    {
+      "finding_id": "mimosa-431344475fe6b86d236e85d2",
+      "file": "modules/reporting.py",
+      "line": 100,
+      "rule_id": "security",
+      "severity": "low",
+      "category": "不安全的随机数",
+      "status": "candidate",
+      "decision": "advisory",
+      "at": "2026-11-18T08:53:09.357Z",
+      "evidence": {
+        "kind": "source",
+        "boundary": "candidate",
+        "producer": "deterministic",
+        "source": "semgrep",
+        "evidence_hash": "f934a873fc4721005d2acb047ff5662abf7e974c2396e6a7f3fd01eedf7008a9",
+        "runtime_oracle": false
+      }
+    }
+  ],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-sess_71129778-dfc0-47c2-9ea8-a24bf4638545-20261118T092148675Z-20624-6e75b92995b0.json",
+    "latest_report": ".mimosa/reports/task-review-sess_71129778-dfc0-47c2-9ea8-a24bf4638545.json",
+    "history_summary": ".mimosa/history/run-20261118T092148675Z-20624-6e75b92995b0.json"
+  }
+}

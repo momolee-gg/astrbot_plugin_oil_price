@@ -1,0 +1,42 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20261116T081208646Z-22748-710725bb87aa",
+  "runId": "20261116T081208646Z-22748-710725bb87aa",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "83b18dad923761bdb98093b64af823da67138a94",
+  "diffHash": "505676765ed32657ba0e22580531827457becdb04cb73be7108f54274597cf32",
+  "rulesVersion": "unavailable",
+  "sessionHash": "f67cbdb2edb0bb108774852f20e433cea5eb73b339263eed1a4d3ad875574e99",
+  "reportRef": ".mimosa/reports/task-review-sess_71129778-dfc0-47c2-9ea8-a24bf4638545-20261116T081208646Z-22748-710725bb87aa.json",
+  "events": [],
+  "observedFindingIds": [
+    "mimosa-d76270a581dc0be7bcc20616",
+    "mimosa-469e87ca2a40df5ecd67e9f9"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "main.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "modules/charts.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/test_oil_plugin.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-11-16T08:12:09.253Z"
+}

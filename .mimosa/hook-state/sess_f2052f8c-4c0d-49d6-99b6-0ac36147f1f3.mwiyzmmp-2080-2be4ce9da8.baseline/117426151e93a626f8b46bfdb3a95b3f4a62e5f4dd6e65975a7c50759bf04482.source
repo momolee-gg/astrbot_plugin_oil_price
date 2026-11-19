@@ -147,16 +147,8 @@ class Prefs:
         return bool(self._get("basic", "monthly_push", True))
 
     # ---------- 通用推送目标行（oil_1010：不区分平台，格式识别 + 调度覆盖） ----------
-
-    def feishu_app_id(self) -> str:
-        return str(self._get("api", "feishu_app_id", "") or "").strip()
-
-    def feishu_app_secret(self) -> str:
-        return str(self._get("api", "feishu_app_secret", "") or "").strip()
-
-    def feishu_app_ready(self) -> bool:
-        """自建应用凭证是否成对就绪（feishu_app 类目标可收海报图片的前提）。"""
-        return bool(self.feishu_app_id() and self.feishu_app_secret())
+    # 飞书个人/群消息统一走 AstrBot 平台适配器（完整 UMO），插件不再持有
+    # 自建应用凭证；webhook 通道不依赖任何凭证（v1.5.2 删除 feishu_app_* 配置）
 
     def push_rows(self) -> list:
         """解析并校验后的推送目标行（群聊在前、个人在后）。
@@ -177,7 +169,10 @@ class Prefs:
         return rows
 
     def _parse_push_row(self, item, group: bool):
-        """单行配置 → 解析后的目标行；非法行返回 None 并记日志。"""
+        """单行配置 → 解析后的目标行；非法行返回 None 并记日志。
+
+        name 为可选展示名（会话选择器/订阅写入的人名或群名），仅用于展示。
+        """
         if not isinstance(item, dict):
             _log.warning("[油价插件] 推送目标行格式不正确，已跳过")
             return None
@@ -199,6 +194,7 @@ class Prefs:
                 limit = None
         return {
             "raw": t["raw"],
+            "name": str(item.get("name") or "").strip()[:60],
             "kind": t["kind"],
             "identity": t["identity"],
             "umo": t["umo"],
@@ -254,7 +250,7 @@ class Prefs:
     # ---------- Web 载荷 ----------
 
     def _stored_push_rows(self, key: str) -> list:
-        """读取已存储的目标行（规整为 {id, frequency, time, limit} 展示形状）。"""
+        """读取已存储的目标行（规整为 {id, name, frequency, time, limit} 展示形状）。"""
         raw = self._get("basic", key, []) or []
         out = []
         for item in raw if isinstance(raw, list) else []:
@@ -266,6 +262,7 @@ class Prefs:
             out.append(
                 {
                     "id": str(item.get("id") or ""),
+                    "name": str(item.get("name") or ""),
                     "frequency": str(item.get("frequency") or ""),
                     "time": str(item.get("time") or ""),
                     "limit": limit,
@@ -293,9 +290,6 @@ class Prefs:
             "default_fuels": self.default_fuels(),
             "app_key": self.app_key(),
             "app_key_ready": self.app_key_ready(),
-            "feishu_app_id": self.feishu_app_id(),
-            "feishu_app_secret": self.feishu_app_secret(),
-            "feishu_app_ready": self.feishu_app_ready(),
             "datasource": DATASOURCE,
             "register_url": REGISTER_URL,
             "province_options": PROVINCES,
@@ -419,7 +413,13 @@ class Prefs:
                     continue
                 seen.add(t["identity"])
                 out.append(
-                    {"id": t["raw"], "frequency": freq, "time": time_s, "limit": lim_i}
+                    {
+                        "id": t["raw"],
+                        "name": str(row.get("name") or "").strip()[:60],
+                        "frequency": freq,
+                        "time": time_s,
+                        "limit": lim_i,
+                    }
                 )
             return out
 
@@ -451,12 +451,6 @@ class Prefs:
         # appKey
         app_key = str(payload.get("app_key", "") or "").strip()
 
-        # 飞书自建应用凭证（成对校验）
-        f_app_id = str(payload.get("feishu_app_id", "") or "").strip()
-        f_app_secret = str(payload.get("feishu_app_secret", "") or "").strip()
-        if bool(f_app_id) != bool(f_app_secret):
-            errors.append("飞书 app_id 与 app_secret 需成对填写")
-
         if errors:
             return errors
 
@@ -480,8 +474,6 @@ class Prefs:
         api["gen_enable"] = gen_enable
         api["gen_cache"] = gen_cache
         api["gen_model"] = gen_model
-        api["feishu_app_id"] = f_app_id
-        api["feishu_app_secret"] = f_app_secret
         return []
 
     def save(self) -> None:

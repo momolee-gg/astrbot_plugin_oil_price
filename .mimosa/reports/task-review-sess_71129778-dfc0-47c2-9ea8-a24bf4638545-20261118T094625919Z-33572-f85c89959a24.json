@@ -1,0 +1,224 @@
+{
+  "schema_version": "mimosa-task-review/v2",
+  "run_id": "20261118T094625919Z-33572-f85c89959a24",
+  "run_status": "inconclusive",
+  "errors": [
+    {
+      "stage": "candidate-select",
+      "target": "C:/Users/gxu/AppData/Local/Temp/oil_trace2.py",
+      "reason": "changed_file_unreadable: observed changed file no longer exists or cannot be read"
+    }
+  ],
+  "coverage": {
+    "schema_version": "mimosa-hook-coverage/v1",
+    "status": "partial",
+    "scope": "hook_observed_diff",
+    "baseline": {
+      "complete": true,
+      "captured_files": 30,
+      "candidate_limit": 5000,
+      "truncated": false,
+      "enumeration_error_count": 0,
+      "snapshot_error_count": 0,
+      "compensated_target_count": 2
+    },
+    "change_tracking": {
+      "touched_observed": 3,
+      "touched_retained": 3,
+      "truncated": false,
+      "bash_mutation": false,
+      "bash_discovered": 0,
+      "bash_discovery_limit": 80,
+      "bash_discovery_truncated": false
+    },
+    "candidates": {
+      "eligible_files": 2,
+      "selected_files": 2,
+      "limit": 20,
+      "truncated": false
+    },
+    "scanning": {
+      "required_files": 2,
+      "scanned_files": 2,
+      "skipped_files": 0,
+      "failed_files": 0,
+      "project_checks_required": 0,
+      "project_checks_completed": 0
+    },
+    "notification": {
+      "eligible_findings": 0,
+      "detailed_findings": 0,
+      "detail_limit": 3,
+      "truncated": false
+    },
+    "reason_counts": {
+      "changed_file_unreadable": 1,
+      "project_check_failed": 1
+    },
+    "reasons": [
+      {
+        "code": "changed_file_unreadable",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_trace2.py",
+        "detail": "observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "candidate-select",
+        "target": "C:/Users/gxu/AppData/Local/Temp/oil_trace2.py",
+        "detail": "changed_file_unreadable: observed changed file no longer exists or cannot be read",
+        "affects_completion": true
+      }
+    ],
+    "reasons_truncated": false
+  },
+  "generated_at": "2026-11-18T09:46:25.919Z",
+  "session_id": "sess_71129778-dfc0-47c2-9ea8-a24bf4638545",
+  "target": ".",
+  "revision": "3c3fe86d1ac982aa7a3e0b4832d965976944311b",
+  "rules_version": "unavailable",
+  "diff_hash": "be1409cd1ad92b9af99a1b0bf12e1cf89347609bd7c84c2895c3ab99d291c1c2",
+  "diff": {
+    "algorithm": "sha256",
+    "changed_file_count": 2,
+    "changed_files": [
+      {
+        "file": "modules/reporting.py",
+        "ranges": [
+          {
+            "start": 22,
+            "end": 22
+          },
+          {
+            "start": 24,
+            "end": 24
+          },
+          {
+            "start": 28,
+            "end": 34
+          },
+          {
+            "start": 37,
+            "end": 50
+          },
+          {
+            "start": 263,
+            "end": 274
+          },
+          {
+            "start": 280,
+            "end": 280
+          },
+          {
+            "start": 349,
+            "end": 359
+          },
+          {
+            "start": 371,
+            "end": 376
+          }
+        ],
+        "before_hash": "98e08b303aa22fb9d8d6ac51c375c145bc119bb0df92c7b3e98a21d3d0cb725c",
+        "after_hash": "1f5aaf60c2e34f94b2170d4385d33b671f8e43f6049ab1aae42d49470960a81c"
+      },
+      {
+        "file": "test/test_oil_plugin.py",
+        "ranges": [
+          {
+            "start": 955,
+            "end": 956
+          },
+          {
+            "start": 959,
+            "end": 967
+          },
+          {
+            "start": 1051,
+            "end": 1052
+          },
+          {
+            "start": 1085,
+            "end": 1091
+          },
+          {
+            "start": 1096,
+            "end": 1097
+          },
+          {
+            "start": 1103,
+            "end": 1103
+          },
+          {
+            "start": 1109,
+            "end": 1109
+          },
+          {
+            "start": 1115,
+            "end": 1115
+          },
+          {
+            "start": 1131,
+            "end": 1137
+          },
+          {
+            "start": 1140,
+            "end": 1141
+          }
+        ],
+        "before_hash": "2e1a44fc7c0f8be0c2f5d71ee6f439adb861cca47a24f8e48edad54267b1e497",
+        "after_hash": "44c5a80276bebe6dcb50a33d837793e92a998f276c8d7c22b9fbcf4e3b5b2f1d"
+      }
+    ]
+  },
+  "timing": {
+    "started_at": "2026-11-18T09:46:23.936Z",
+    "completed_at": "2026-11-18T09:46:25.919Z",
+    "duration_ms": 1983,
+    "measurement": "hook_wall_clock"
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "model_calls": 0,
+    "measurement": "known-zero"
+  },
+  "telemetry": {
+    "schemaVersion": "mimosa-gate-telemetry/v1",
+    "profile": "gate",
+    "operation": "Stop",
+    "outcome": "partial/INCONCLUSIVE",
+    "latencyMs": 1983,
+    "peakMemoryBytes": 145993728,
+    "memoryMeasurement": "max-observed-process-rss",
+    "scannedFiles": 2,
+    "cache": {
+      "hits": 0,
+      "misses": 0,
+      "measurement": "not-applicable"
+    },
+    "denyCount": 0,
+    "tokens": {
+      "input": 0,
+      "output": 0,
+      "total": 0,
+      "modelCalls": 0,
+      "measurement": "known-zero"
+    }
+  },
+  "finding_count": 0,
+  "rewake_finding_count": 0,
+  "evidence_boundary": {
+    "scan": "candidate",
+    "static_fix_verification": "observed_static_only",
+    "runtime_verification": "not_performed"
+  },
+  "finding_events": [],
+  "findings": [],
+  "artifacts": {
+    "immutable_report": ".mimosa/reports/task-review-sess_71129778-dfc0-47c2-9ea8-a24bf4638545-20261118T094625919Z-33572-f85c89959a24.json",
+    "latest_report": ".mimosa/reports/task-review-sess_71129778-dfc0-47c2-9ea8-a24bf4638545.json",
+    "history_summary": ".mimosa/history/run-20261118T094625919Z-33572-f85c89959a24.json"
+  }
+}

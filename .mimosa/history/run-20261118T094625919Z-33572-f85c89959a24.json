@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20261118T094625919Z-33572-f85c89959a24",
+  "runStatus": "inconclusive",
+  "errors": [
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_trace2.py: changed_file_unreadable: observed changed file no longer exists or cannot be read"
+  ],
+  "target": ".",
+  "revision": "3c3fe86d1ac982aa7a3e0b4832d965976944311b",
+  "diffHash": "be1409cd1ad92b9af99a1b0bf12e1cf89347609bd7c84c2895c3ab99d291c1c2",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-11-18T09:46:25.919Z",
+  "timing": {
+    "startedAt": "2026-11-18T09:46:23.936Z",
+    "completedAt": "2026-11-18T09:46:25.919Z",
+    "durationMs": 1983
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 0,
+    "bySeverity": {},
+    "byStatus": {}
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "changed_file_unreadable": 1,
+      "project_check_failed": 1
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-sess_71129778-dfc0-47c2-9ea8-a24bf4638545-20261118T094625919Z-33572-f85c89959a24.json"
+}

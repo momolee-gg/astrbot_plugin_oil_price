@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20261118T101402410Z-15384-ad6f31418530",
+  "runId": "20261118T101402410Z-15384-ad6f31418530",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "dc0d1deb70c87182c2cd1e5c0a8b2de71fe673ec",
+  "diffHash": "504aa132cb73b36c48c620d1cb36dd46cac1a2dead3c925d9dae3ec802d394e5",
+  "rulesVersion": "unavailable",
+  "sessionHash": "f67cbdb2edb0bb108774852f20e433cea5eb73b339263eed1a4d3ad875574e99",
+  "reportRef": ".mimosa/reports/task-review-sess_71129778-dfc0-47c2-9ea8-a24bf4638545-20261118T101402410Z-15384-ad6f31418530.json",
+  "events": [],
+  "observedFindingIds": [
+    "mimosa-431344475fe6b86d236e85d2"
+  ],
+  "verifiedFiles": [
+    {
+      "file": "modules/reporting.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    },
+    {
+      "file": "test/test_oil_plugin.py",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-11-18T10:14:03.029Z"
+}

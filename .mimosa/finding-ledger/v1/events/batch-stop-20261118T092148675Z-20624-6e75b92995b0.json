@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20261118T092148675Z-20624-6e75b92995b0",
+  "runId": "20261118T092148675Z-20624-6e75b92995b0",
+  "runStatus": "inconclusive",
+  "coverage": {
+    "status": "partial",
+    "reasons": [
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "modules/charts.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "modules/reporting.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "main.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "modules/forecast.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "scanner_failed",
+        "stage": "scan",
+        "target": "test/test_oil_plugin.py",
+        "detail": "spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "modules/charts.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "modules/reporting.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "main.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "modules/forecast.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      },
+      {
+        "code": "project_check_failed",
+        "stage": "scan",
+        "target": "test/test_oil_plugin.py",
+        "detail": "scanner_failed: spawnSync C:\\nvm4w\\nodejs\\node.exe ETIMEDOUT",
+        "affectsCompletion": true
+      }
+    ]
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "e1e040a269d81edd3a7cbf48d19809b3d72ace0c",
+  "diffHash": "fb497497940271ecdd07d7774c34ecc2826e9f5b2a91790a3bc9678ae51fcb9b",
+  "rulesVersion": "unavailable",
+  "sessionHash": "f67cbdb2edb0bb108774852f20e433cea5eb73b339263eed1a4d3ad875574e99",
+  "reportRef": ".mimosa/reports/task-review-sess_71129778-dfc0-47c2-9ea8-a24bf4638545-20261118T092148675Z-20624-6e75b92995b0.json",
+  "events": [
+    {
+      "eventId": "hook-d9624457622efb5bda4330f34e4edbb2",
+      "findingId": "mimosa-431344475fe6b86d236e85d2",
+      "type": "finding_observed",
+      "at": "2026-11-18T08:53:09.357Z",
+      "identity": {
+        "projectRelativeFile": "modules/reporting.py",
+        "ruleId": "security",
+        "codeEvidenceHash": "f934a873fc4721005d2acb047ff5662abf7e974c2396e6a7f3fd01eedf7008a9",
+        "confidence": "stable"
+      },
+      "scope": "direct",
+      "line": 100,
+      "endLine": 100,
+      "reasonCode": "advisory",
+      "reportedToAgent": true,
+      "evidence": {
+        "kind": "source",
+        "boundary": "candidate",
+        "producer": "deterministic",
+        "evidenceHash": "f934a873fc4721005d2acb047ff5662abf7e974c2396e6a7f3fd01eedf7008a9"
+      },
+      "sequence": 0
+    }
+  ],
+  "observedFindingIds": [],
+  "verifiedFiles": [],
+  "recordedAt": "2026-11-18T09:21:49.425Z"
+}

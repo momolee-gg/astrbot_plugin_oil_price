@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-11-18T10:39:22.404Z",
+  "sessionId": "sess_71129778-dfc0-47c2-9ea8-a24bf4638545",
+  "event": "PostToolUse",
+  "toolName": "Write",
+  "file": "C:/Users/gxu/AppData/Local/Temp/oil-v1.5.5-release-notes.md",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 10,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

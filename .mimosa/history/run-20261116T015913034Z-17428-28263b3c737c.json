@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "mimosa-finding-history/v1",
+  "runId": "20261116T015913034Z-17428-28263b3c737c",
+  "runStatus": "inconclusive",
+  "errors": [
+    "candidate-select:C:/Users/gxu/AppData/Local/Temp/oil_ssh_askpass.sh: changed_file_unreadable: observed changed file no longer exists or cannot be read"
+  ],
+  "target": ".",
+  "revision": "c509ab183b502f355d0e0614214d3ad14f4f4914",
+  "diffHash": "72b515d3c20149ca740c99c7d93a2429b104e5e895da8a15bbbe74bdafa1264d",
+  "rulesVersion": "unavailable",
+  "recordedAt": "2026-11-16T01:59:13.034Z",
+  "timing": {
+    "startedAt": "2026-11-16T01:59:10.109Z",
+    "completedAt": "2026-11-16T01:59:13.034Z",
+    "durationMs": 2925
+  },
+  "tokens": {
+    "input": 0,
+    "output": 0,
+    "total": 0,
+    "modelCalls": 0,
+    "measurement": "known-zero"
+  },
+  "findings": {
+    "total": 0,
+    "bySeverity": {},
+    "byStatus": {}
+  },
+  "coverage": {
+    "status": "partial",
+    "reasonCounts": {
+      "changed_file_unreadable": 1,
+      "project_check_failed": 1
+    }
+  },
+  "evidenceBoundary": "static_only",
+  "immutableReport": ".mimosa/reports/task-review-sess_f2052f8c-4c0d-49d6-99b6-0ac36147f1f3-20261116T015913034Z-17428-28263b3c737c.json"
+}
